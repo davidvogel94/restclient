@@ -1,0 +1,16 @@
+
+/* A secret still sitting in the user's file, with the offer to move it. */
+button.link {
+  padding: 2px 0;
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  font-size: 0.9em;
+  text-align: left;
+}
+
+button.link:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+button.link.warn { color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow)); }

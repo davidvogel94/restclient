@@ -1,0 +1,114 @@
+{
+	"info": {
+		"_postman_id": "3f6a1c22-0000-4000-8000-smoke00000001",
+		"name": "Smoke",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "basic",
+		"basic": [
+			{ "key": "username", "value": "{{user}}", "type": "string" },
+			{ "key": "password", "value": "{{pass}}", "type": "string" }
+		]
+	},
+	"variable": [
+		{ "key": "collectionVar", "value": "cv-value" }
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"pm.collectionVariables.set('setByCollectionPrerequest', 'yes');"
+				]
+			}
+		}
+	],
+	"item": [
+		{
+			"name": "Login",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('login returns 200', function () { pm.response.to.have.status(200); });",
+							"const body = pm.response.json();",
+							"pm.test('token issued', function () { pm.expect(body.token).to.be.a('string'); });",
+							"pm.environment.set('token', body.token);",
+							"pm.test('basic auth was applied from collection level', function () {",
+							"  pm.expect(body.sawAuth).to.eql('Basic ' + btoa('alice:s3cr3t'));",
+							"});",
+							"pm.test('collection prerequest ran', function () {",
+							"  pm.expect(pm.collectionVariables.get('setByCollectionPrerequest')).to.eql('yes');",
+							"});"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [ { "key": "Content-Type", "value": "application/json" } ],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"user\": \"{{user}}\",\n  \"cv\": \"{{collectionVar}}\"\n}",
+					"options": { "raw": { "language": "json" } }
+				},
+				"url": { "raw": "{{baseUrl}}/login", "host": [ "{{baseUrl}}" ], "path": [ "login" ] }
+			}
+		},
+		{
+			"name": "Me",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"const _ = require('lodash');",
+							"pm.variables.set('nonce', _.toUpper('n-' + pm.info.requestName));"
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"const body = pm.response.json();",
+							"pm.test('bearer token from previous request was used', function () {",
+							"  pm.expect(body.sawAuth).to.eql('Bearer ' + pm.environment.get('token'));",
+							"});",
+							"pm.test('prerequest local var interpolated into query', function () {",
+							"  pm.expect(body.query.nonce).to.eql('N-ME');",
+							"});",
+							"pm.test('sendRequest works', function (done) {",
+							"  pm.sendRequest(pm.environment.get('baseUrl') + '/ping', function (err, res) {",
+							"    pm.expect(err).to.be.null;",
+							"    pm.expect(res.json().pong).to.eql(true);",
+							"    done();",
+							"  });",
+							"});",
+							"console.log('me-request-finished');"
+						]
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [ { "key": "token", "value": "{{token}}", "type": "string" } ]
+				},
+				"method": "GET",
+				"url": {
+					"raw": "{{baseUrl}}/me?nonce={{nonce}}",
+					"host": [ "{{baseUrl}}" ],
+					"path": [ "me" ],
+					"query": [ { "key": "nonce", "value": "{{nonce}}" } ]
+				}
+			}
+		}
+	]
+}

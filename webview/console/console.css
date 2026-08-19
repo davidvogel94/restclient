@@ -1,0 +1,61 @@
+.console-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--rc-border);
+  flex: 0 0 auto;
+}
+
+.console-toolbar input.filter {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--rc-border);
+  border-radius: 3px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+}
+
+.entries { flex: 1 1 0; min-height: 0; overflow: auto; }
+
+.entry {
+  border-bottom: 1px solid var(--rc-border);
+  padding: 3px 8px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+}
+
+.entry.error { color: var(--vscode-charts-red); }
+
+.entry-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  cursor: pointer;
+}
+
+.entry-head:hover { background: var(--vscode-list-hoverBackground); }
+
+.entry .time { color: var(--vscode-descriptionForeground); flex: 0 0 auto; }
+.entry .title { flex: 1; word-break: break-all; }
+.entry .meta { color: var(--vscode-descriptionForeground); flex: 0 0 auto; white-space: nowrap; }
+
+.entry .code-2xx { color: var(--vscode-charts-green); }
+.entry .code-3xx { color: var(--vscode-charts-yellow); }
+.entry .code-4xx,
+.entry .code-5xx { color: var(--vscode-charts-red); }
+
+.entry-detail {
+  padding: 6px 0 6px 18px;
+  border-left: 2px solid var(--rc-border);
+  margin: 4px 0 4px 6px;
+}
+
+.entry-detail .label {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.entry-detail .label:first-child { margin-top: 0; }

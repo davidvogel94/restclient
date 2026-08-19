@@ -1,0 +1,631 @@
+{
+  "name": "restclient",
+  "displayName": "REST Client",
+  "description": "Postman-compatible REST client for VS Code. Runs real Postman collections, environments and pm.* scripts locally, with no account.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "private": true,
+  "publisher": "locatrix",
+  "engines": {
+    "vscode": "^1.96.0",
+    "node": ">=18"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Pre-request and test scripts from collections are not executed in an untrusted workspace."
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "check": "tsc --noEmit",
+    "test:unit": "npm run build && npm run compile:test && node --test out/test/unit/",
+    "spike": "node scripts/spike.mjs",
+    "package": "vsce package --allow-missing-repository --skip-license -o restclient-0.0.1.vsix",
+    "compile:test": "tsc --outDir out",
+    "test:integration": "npm run build && npm run compile:test && vscode-test",
+    "test": "npm run test:unit && npm run test:integration",
+    "ship-check": "npm run package && npm run compile:test && node scripts/ship-check.cjs restclient-0.0.1.vsix"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "jsonc-parser": "^3.3.1",
+    "postman-collection": "5.3.1",
+    "postman-collection-transformer": "4.1.14",
+    "postman-runtime": "7.56.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode-elements/elements": "^2.5.1",
+    "@vscode/codicons": "^0.0.45",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.0",
+    "esbuild-svelte": "^0.9.5",
+    "highlight.js": "^11.12.0",
+    "svelte": "^5.56.9",
+    "svelte-preprocess": "^6.0.5",
+    "typescript": "^5.7.0"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "restclient",
+          "title": "REST Client",
+          "icon": "resources/activity-icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "restclient-console",
+          "title": "Postman Console",
+          "icon": "resources/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "restclient": [
+        {
+          "id": "restclient.collections",
+          "name": "Collections",
+          "icon": "resources/activity-icon.svg"
+        },
+        {
+          "id": "restclient.environments",
+          "name": "Environments",
+          "icon": "resources/activity-icon.svg"
+        }
+      ],
+      "restclient-console": [
+        {
+          "id": "restclient.console",
+          "name": "Postman Console",
+          "type": "webview"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "restclient.collections",
+        "contents": "No Postman collections in this workspace yet.\n\nCollections and environments are edited in place, wherever you keep them \u2014 nothing is copied. The list of files lives in `restclient.collections` and `restclient.environments` in your workspace settings.\n\n[Add Postman Collection](command:restclient.import)",
+        "when": "restclient:hasWorkspace && !restclient:hasCollections"
+      },
+      {
+        "view": "restclient.collections",
+        "contents": "Open a folder to track collections in.\n\n[Open Folder](command:vscode.openFolder)",
+        "when": "!restclient:hasWorkspace"
+      },
+      {
+        "view": "restclient.environments",
+        "contents": "No environments in this workspace yet.\n\nAn environment supplies the `{{variables}}` a request resolves against.\n\n[New Environment](command:restclient.newEnvironment)\n[Add Existing Environment](command:restclient.import)",
+        "when": "restclient:hasWorkspace && !restclient:hasEnvironments"
+      }
+    ],
+    "commands": [
+      {
+        "command": "restclient.import",
+        "title": "Add Postman Collection or Environment",
+        "category": "REST Client",
+        "icon": "$(add)"
+      },
+      {
+        "command": "restclient.removeFromWorkspace",
+        "title": "Stop Working on This Collection",
+        "category": "REST Client",
+        "icon": "$(close)"
+      },
+      {
+        "command": "restclient.refresh",
+        "title": "Refresh Collections",
+        "category": "REST Client",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "restclient.selectEnvironment",
+        "title": "Select Environment",
+        "category": "REST Client",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "restclient.openRequest",
+        "title": "Open Request",
+        "category": "REST Client"
+      },
+      {
+        "command": "restclient.openCollectionFile",
+        "title": "Open Collection JSON",
+        "category": "REST Client",
+        "icon": "$(json)"
+      },
+      {
+        "command": "restclient.newRequest",
+        "title": "New Request",
+        "category": "REST Client",
+        "icon": "$(add)"
+      },
+      {
+        "command": "restclient.newFolder",
+        "title": "New Folder",
+        "category": "REST Client",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "restclient.rename",
+        "title": "Rename",
+        "category": "REST Client",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "restclient.duplicate",
+        "title": "Duplicate",
+        "category": "REST Client",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "restclient.delete",
+        "title": "Delete",
+        "category": "REST Client",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "restclient.newEnvironment",
+        "title": "New Environment",
+        "category": "REST Client",
+        "icon": "$(add)"
+      },
+      {
+        "command": "restclient.removeEnvironment",
+        "title": "Stop Working on This Environment",
+        "category": "REST Client",
+        "icon": "$(close)"
+      },
+      {
+        "command": "restclient.openEnvironmentFile",
+        "title": "Open Environment File",
+        "category": "REST Client",
+        "icon": "$(json)"
+      },
+      {
+        "command": "restclient.addVariable",
+        "title": "Add Variable",
+        "category": "REST Client",
+        "icon": "$(add)"
+      },
+      {
+        "command": "restclient.editVariable",
+        "title": "Edit Value",
+        "category": "REST Client",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "restclient.toggleVariable",
+        "title": "Enable or Disable Variable",
+        "category": "REST Client",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "restclient.toggleVariableSecret",
+        "title": "Toggle Secret",
+        "category": "REST Client"
+      },
+      {
+        "command": "restclient.moveSecretToKeychain",
+        "title": "Move Secret to OS Keychain",
+        "category": "REST Client",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "restclient.deleteVariable",
+        "title": "Delete Variable",
+        "category": "REST Client",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "restclient.editEnvironment",
+        "title": "Edit Environment",
+        "category": "REST Client",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "restclient.clearResponses",
+        "title": "Clear Cached Responses",
+        "category": "REST Client",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "restclient.clearCookies",
+        "title": "Clear Cookies",
+        "category": "REST Client",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "restclient.showConsole",
+        "title": "Show Postman Console",
+        "category": "REST Client",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "restclient.clearConsole",
+        "title": "Clear Console",
+        "category": "REST Client",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "restclient.manageCookies",
+        "title": "Manage Cookies",
+        "category": "REST Client",
+        "icon": "$(symbol-key)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "restclient.openRequest",
+          "when": "false"
+        },
+        {
+          "command": "restclient.openCollectionFile",
+          "when": "false"
+        },
+        {
+          "command": "restclient.rename",
+          "when": "false"
+        },
+        {
+          "command": "restclient.duplicate",
+          "when": "false"
+        },
+        {
+          "command": "restclient.delete",
+          "when": "false"
+        },
+        {
+          "command": "restclient.removeFromWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "restclient.removeEnvironment",
+          "when": "false"
+        },
+        {
+          "command": "restclient.openEnvironmentFile",
+          "when": "false"
+        },
+        {
+          "command": "restclient.addVariable",
+          "when": "false"
+        },
+        {
+          "command": "restclient.editVariable",
+          "when": "false"
+        },
+        {
+          "command": "restclient.toggleVariable",
+          "when": "false"
+        },
+        {
+          "command": "restclient.toggleVariableSecret",
+          "when": "false"
+        },
+        {
+          "command": "restclient.moveSecretToKeychain",
+          "when": "false"
+        },
+        {
+          "command": "restclient.deleteVariable",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "restclient.newRequest",
+          "when": "view == restclient.collections && restclient:hasCollections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "restclient.import",
+          "when": "view == restclient.collections",
+          "group": "navigation@2"
+        },
+        {
+          "command": "restclient.selectEnvironment",
+          "when": "view == restclient.collections",
+          "group": "navigation@3"
+        },
+        {
+          "command": "restclient.refresh",
+          "when": "view == restclient.collections",
+          "group": "navigation@4"
+        },
+        {
+          "command": "restclient.newFolder",
+          "when": "view == restclient.collections && restclient:hasCollections",
+          "group": "1_new@1"
+        },
+        {
+          "command": "restclient.editEnvironment",
+          "when": "view == restclient.collections",
+          "group": "1_new@2"
+        },
+        {
+          "command": "restclient.showConsole",
+          "when": "view == restclient.collections",
+          "group": "1_new@3"
+        },
+        {
+          "command": "restclient.clearConsole",
+          "when": "view == restclient.console",
+          "group": "navigation@1"
+        },
+        {
+          "command": "restclient.manageCookies",
+          "when": "view == restclient.collections",
+          "group": "1_new@4"
+        },
+        {
+          "command": "restclient.newEnvironment",
+          "when": "view == restclient.environments",
+          "group": "navigation@1"
+        },
+        {
+          "command": "restclient.import",
+          "when": "view == restclient.environments",
+          "group": "navigation@2"
+        },
+        {
+          "command": "restclient.refresh",
+          "when": "view == restclient.environments",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "restclient.newRequest",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.newFolder",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)$/",
+          "group": "1_new@2"
+        },
+        {
+          "command": "restclient.openCollectionFile",
+          "when": "view == restclient.collections && viewItem == collection",
+          "group": "inline@2"
+        },
+        {
+          "command": "restclient.rename",
+          "when": "view == restclient.collections && viewItem =~ /^(request|folder)$/",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "restclient.duplicate",
+          "when": "view == restclient.collections && viewItem =~ /^(request|folder)$/",
+          "group": "2_edit@2"
+        },
+        {
+          "command": "restclient.delete",
+          "when": "view == restclient.collections && viewItem =~ /^(request|folder)$/",
+          "group": "3_destructive@1"
+        },
+        {
+          "command": "restclient.removeFromWorkspace",
+          "when": "view == restclient.collections && viewItem == collection",
+          "group": "9_remove"
+        },
+        {
+          "command": "restclient.addVariable",
+          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.editEnvironment",
+          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "group": "inline@2"
+        },
+        {
+          "command": "restclient.openEnvironmentFile",
+          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "restclient.removeEnvironment",
+          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "group": "9_remove@1"
+        },
+        {
+          "command": "restclient.editVariable",
+          "when": "view == restclient.environments && viewItem =~ /^variable/",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.moveSecretToKeychain",
+          "when": "view == restclient.environments && viewItem == variablePlaintextSecret",
+          "group": "inline@2"
+        },
+        {
+          "command": "restclient.deleteVariable",
+          "when": "view == restclient.environments && viewItem =~ /^variable/",
+          "group": "inline@3"
+        },
+        {
+          "command": "restclient.toggleVariable",
+          "when": "view == restclient.environments && viewItem =~ /^variable/",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "restclient.toggleVariableSecret",
+          "when": "view == restclient.environments && viewItem =~ /^variable/",
+          "group": "2_edit@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "restclient.import",
+          "when": "resourceFilename =~ /postman_(collection|environment|globals)\\.json$/",
+          "group": "7_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "REST Client",
+      "properties": {
+        "restclient.collections": {
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Postman collection files this workspace works on, edited in place. Paths are relative to the workspace folder; absolute and `~/`-prefixed paths are also accepted.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "restclient.environments": {
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Postman environment files this workspace works on, edited in place. Paths are relative to the workspace folder; absolute and `~/`-prefixed paths are also accepted.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "restclient.followRedirects": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically follow HTTP redirects."
+        },
+        "restclient.strictSSL": {
+          "type": "boolean",
+          "default": false,
+          "description": "Verify TLS certificates. Postman leaves this off by default; when unset, VS Code's own http.proxyStrictSSL is not consulted and verification stays off."
+        },
+        "restclient.requestTimeoutMs": {
+          "type": "number",
+          "default": 0,
+          "description": "Milliseconds before a request times out. 0 means no timeout."
+        },
+        "restclient.scriptTimeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "description": "Milliseconds a pre-request or test script may run before it is terminated."
+        },
+        "restclient.maxResponseSizeMb": {
+          "type": "number",
+          "default": 5,
+          "description": "Largest response body kept in memory and shown in the response pane, in megabytes."
+        },
+        "restclient.maxRedirects": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum number of redirects to follow."
+        },
+        "restclient.protocolVersion": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "http1",
+            "http2"
+          ],
+          "default": "auto",
+          "description": "HTTP protocol version to negotiate."
+        },
+        "restclient.certificates": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Client certificates. Paths are resolved inside the workspace folder.",
+          "items": {
+            "type": "object",
+            "required": [
+              "matches"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Label shown in logs."
+              },
+              "matches": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "URL match patterns, e.g. `https://api.example.com/*`."
+              },
+              "key": {
+                "type": "string",
+                "description": "Path to the private key (PEM)."
+              },
+              "cert": {
+                "type": "string",
+                "description": "Path to the certificate (PEM)."
+              },
+              "pfx": {
+                "type": "string",
+                "description": "Path to a PFX/P12 bundle, instead of key + cert."
+              },
+              "passphrase": {
+                "type": "string",
+                "description": "Passphrase for the key or PFX."
+              }
+            }
+          }
+        },
+        "restclient.proxies": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Proxy servers. When empty, VS Code's `#http.proxy#` setting is used instead.",
+          "items": {
+            "type": "object",
+            "required": [
+              "host"
+            ],
+            "properties": {
+              "match": {
+                "type": "string",
+                "default": "http+https://*/*",
+                "description": "Which requests this proxy applies to."
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": "number",
+                "default": 8080
+              },
+              "tunnel": {
+                "type": "boolean",
+                "default": false,
+                "description": "Use CONNECT tunnelling."
+              },
+              "disabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "username": {
+                "type": "string"
+              },
+              "password": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

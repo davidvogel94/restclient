@@ -1,0 +1,8 @@
+{
+  "restclient.collections": [
+    "api/smoke.postman_collection.json"
+  ],
+  "restclient.environments": [
+    "api/local.postman_environment.json"
+  ]
+}
