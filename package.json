@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "license": "MIT",
   "private": true,
-  "publisher": "locatrix",
+  "publisher": "davidvogel94",
   "engines": {
     "vscode": "^1.96.0",
     "node": ">=18"
@@ -31,9 +31,9 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "check": "tsc --noEmit",
-    "test:unit": "npm run build && npm run compile:test && node --test out/test/unit/",
+    "test:unit": "npm run build && npm run compile:test && node --test \"out/test/unit/*.test.js\"",
     "spike": "node scripts/spike.mjs",
-    "package": "vsce package --allow-missing-repository --skip-license -o restclient-0.0.1.vsix",
+    "package": "vsce package --no-yarn --allow-missing-repository --skip-license -o restclient-0.0.1.vsix",
     "compile:test": "tsc --outDir out",
     "test:integration": "npm run build && npm run compile:test && vscode-test",
     "test": "npm run test:unit && npm run test:integration",
@@ -90,6 +90,11 @@
           "id": "restclient.environments",
           "name": "Environments",
           "icon": "resources/activity-icon.svg"
+        },
+        {
+          "id": "restclient.cookies",
+          "name": "Cookies",
+          "icon": "resources/activity-icon.svg"
         }
       ],
       "restclient-console": [
@@ -103,26 +108,79 @@
     "viewsWelcome": [
       {
         "view": "restclient.collections",
-        "contents": "No Postman collections in this workspace yet.\n\nCollections and environments are edited in place, wherever you keep them \u2014 nothing is copied. The list of files lives in `restclient.collections` and `restclient.environments` in your workspace settings.\n\n[Add Postman Collection](command:restclient.import)",
-        "when": "restclient:hasWorkspace && !restclient:hasCollections"
+        "contents": "No Postman collections found in this workspace.\n\nThe workspace is scanned for `*.postman_collection.json` and anything it finds is worked on in place. Create one, or import an export from elsewhere — it is copied in.\n\n[New Collection](command:restclient.newCollection)\n[Import Collection](command:restclient.importCollection)\n\nCollections that live outside this folder are picked up once you add their folder to the workspace.\n[Add Folder to Workspace](command:workbench.action.addRootFolder)\n[Configure Discovery](command:restclient.openSettings)",
+        "when": "restclient:hasWorkspace && !restclient:hasCollections && restclient:autoDiscover"
       },
       {
         "view": "restclient.collections",
-        "contents": "Open a folder to track collections in.\n\n[Open Folder](command:vscode.openFolder)",
-        "when": "!restclient:hasWorkspace"
+        "contents": "No Postman collections in this workspace yet.\n\nThe workspace scan is off, so only the files named in `restclient.collections` are used.\n\n[New Collection](command:restclient.newCollection)\n[Import Collection](command:restclient.importCollection)\n[Turn On Discovery](command:restclient.openSettings)",
+        "when": "restclient:hasWorkspace && !restclient:hasCollections && !restclient:autoDiscover"
+      },
+      {
+        "view": "restclient.collections",
+        "contents": "REST Client works on the folders you have open, and there are none.\n\nOpen the folder your collections are in — or any folder, then add theirs to it. Requests can only read files from a folder in the workspace, which is why one has to be open.\n\n[Open Folder](command:workbench.action.files.openFileFolder)",
+        "when": "!restclient:hasWorkspace && isMac && !remoteName"
+      },
+      {
+        "view": "restclient.collections",
+        "contents": "REST Client works on the folders you have open, and there are none.\n\nOpen the folder your collections are in — or any folder, then add theirs to it. Requests can only read files from a folder in the workspace, which is why one has to be open.\n\n[Open Folder](command:workbench.action.files.openFolder)",
+        "when": "!restclient:hasWorkspace && !(isMac && !remoteName)"
       },
       {
         "view": "restclient.environments",
-        "contents": "No environments in this workspace yet.\n\nAn environment supplies the `{{variables}}` a request resolves against.\n\n[New Environment](command:restclient.newEnvironment)\n[Add Existing Environment](command:restclient.import)",
-        "when": "restclient:hasWorkspace && !restclient:hasEnvironments"
+        "contents": "No environments found in this workspace.\n\nAn environment supplies the `{{variables}}` a request resolves against. The workspace is scanned for `*.postman_environment.json`; create an empty one, or import an export — it is copied in.\n\n[New Environment](command:restclient.newEnvironment)\n[Import Environment](command:restclient.importEnvironment)\n[Configure Discovery](command:restclient.openSettings)",
+        "when": "restclient:hasWorkspace && !restclient:hasEnvironments && restclient:autoDiscover"
+      },
+      {
+        "view": "restclient.environments",
+        "contents": "No environments in this workspace yet.\n\nAn environment supplies the `{{variables}}` a request resolves against. The workspace scan is off, so only the files named in `restclient.environments` are used.\n\n[New Environment](command:restclient.newEnvironment)\n[Import Environment](command:restclient.importEnvironment)\n[Turn On Discovery](command:restclient.openSettings)",
+        "when": "restclient:hasWorkspace && !restclient:hasEnvironments && !restclient:autoDiscover"
+      },
+      {
+        "view": "restclient.cookies",
+        "contents": "No cookies stored yet.\n\nCookies a response sets are kept here and sent on the next request — in the extension's global storage, never in your workspace. You can also add one by hand.\n\n[Manage Cookies](command:restclient.manageCookies)"
       }
     ],
     "commands": [
       {
         "command": "restclient.import",
-        "title": "Add Postman Collection or Environment",
+        "title": "Import Postman File",
         "category": "REST Client",
-        "icon": "$(add)"
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "restclient.importCollection",
+        "title": "Import Collection",
+        "category": "REST Client",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "restclient.importEnvironment",
+        "title": "Import Environment",
+        "category": "REST Client",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "restclient.setImportLocation",
+        "title": "Set Import Location",
+        "category": "REST Client"
+      },
+      {
+        "command": "restclient.openSettings",
+        "title": "Settings",
+        "category": "REST Client",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "restclient.showExcluded",
+        "title": "Excluded from Workspace Scan",
+        "category": "REST Client"
+      },
+      {
+        "command": "restclient.convertCollection",
+        "title": "Convert to v2.1.0",
+        "category": "REST Client",
+        "icon": "$(arrow-up)"
       },
       {
         "command": "restclient.removeFromWorkspace",
@@ -131,16 +189,58 @@
         "icon": "$(close)"
       },
       {
-        "command": "restclient.refresh",
-        "title": "Refresh Collections",
+        "command": "restclient.expandRow",
+        "title": "Expand All",
         "category": "REST Client",
-        "icon": "$(refresh)"
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "restclient.collapseRow",
+        "title": "Collapse All",
+        "category": "REST Client",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "restclient.filterCollections",
+        "title": "Filter Collections",
+        "category": "REST Client",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "restclient.clearCollectionsFilter",
+        "title": "Clear Collections Filter",
+        "category": "REST Client",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "restclient.filterEnvironments",
+        "title": "Filter Environments",
+        "category": "REST Client",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "restclient.clearEnvironmentsFilter",
+        "title": "Clear Environments Filter",
+        "category": "REST Client",
+        "icon": "$(clear-all)"
       },
       {
         "command": "restclient.selectEnvironment",
-        "title": "Select Environment",
+        "title": "Select Active Environment",
         "category": "REST Client",
         "icon": "$(globe)"
+      },
+      {
+        "command": "restclient.setActiveEnvironment",
+        "title": "Set as Active Environment",
+        "category": "REST Client",
+        "icon": "$(pass)"
+      },
+      {
+        "command": "restclient.clearActiveEnvironment",
+        "title": "Run Without an Environment",
+        "category": "REST Client",
+        "icon": "$(circle-slash)"
       },
       {
         "command": "restclient.openRequest",
@@ -148,10 +248,55 @@
         "category": "REST Client"
       },
       {
+        "command": "restclient.runRequest",
+        "title": "Run Request",
+        "category": "REST Client",
+        "icon": "$(play)"
+      },
+      {
+        "command": "restclient.openOverview",
+        "title": "Open Overview",
+        "category": "REST Client",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "restclient.runAll",
+        "title": "Run All Requests",
+        "category": "REST Client",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "restclient.stopRun",
+        "title": "Stop Run",
+        "category": "REST Client",
+        "icon": {
+          "light": "resources/stop-light.svg",
+          "dark": "resources/stop-dark.svg"
+        }
+      },
+      {
         "command": "restclient.openCollectionFile",
         "title": "Open Collection JSON",
         "category": "REST Client",
         "icon": "$(json)"
+      },
+      {
+        "command": "restclient.exportCollection",
+        "title": "Export Collection",
+        "category": "REST Client",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "restclient.exportAllCollections",
+        "title": "Export All Collections",
+        "category": "REST Client",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "restclient.newCollection",
+        "title": "New Collection",
+        "category": "REST Client",
+        "icon": "$(new-file)"
       },
       {
         "command": "restclient.newRequest",
@@ -187,7 +332,7 @@
         "command": "restclient.newEnvironment",
         "title": "New Environment",
         "category": "REST Client",
-        "icon": "$(add)"
+        "icon": "$(new-file)"
       },
       {
         "command": "restclient.removeEnvironment",
@@ -200,6 +345,18 @@
         "title": "Open Environment File",
         "category": "REST Client",
         "icon": "$(json)"
+      },
+      {
+        "command": "restclient.exportEnvironment",
+        "title": "Export Environment",
+        "category": "REST Client",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "restclient.exportAllEnvironments",
+        "title": "Export All Environments",
+        "category": "REST Client",
+        "icon": "$(save-as)"
       },
       {
         "command": "restclient.addVariable",
@@ -271,12 +428,76 @@
         "title": "Manage Cookies",
         "category": "REST Client",
         "icon": "$(symbol-key)"
+      },
+      {
+        "command": "restclient.editCookie",
+        "title": "Edit Cookie Value",
+        "category": "REST Client",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "restclient.deleteCookie",
+        "title": "Delete Cookie",
+        "category": "REST Client",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "restclient.deleteCookieDomain",
+        "title": "Delete All Cookies for This Domain",
+        "category": "REST Client",
+        "icon": "$(trash)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "restclient.filterCollections",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "focusedView == restclient.collections"
+      },
+      {
+        "command": "restclient.filterEnvironments",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "focusedView == restclient.environments"
       }
     ],
     "menus": {
       "commandPalette": [
         {
+          "command": "restclient.import",
+          "when": "false"
+        },
+        {
+          "command": "restclient.setActiveEnvironment",
+          "when": "false"
+        },
+        {
           "command": "restclient.openRequest",
+          "when": "false"
+        },
+        {
+          "command": "restclient.runRequest",
+          "when": "false"
+        },
+        {
+          "command": "restclient.openOverview",
+          "when": "false"
+        },
+        {
+          "command": "restclient.expandRow",
+          "when": "false"
+        },
+        {
+          "command": "restclient.collapseRow",
+          "when": "false"
+        },
+        {
+          "command": "restclient.runAll",
+          "when": "false"
+        },
+        {
+          "command": "restclient.stopRun",
           "when": "false"
         },
         {
@@ -330,43 +551,54 @@
         {
           "command": "restclient.deleteVariable",
           "when": "false"
+        },
+        {
+          "command": "restclient.editCookie",
+          "when": "false"
+        },
+        {
+          "command": "restclient.deleteCookie",
+          "when": "false"
+        },
+        {
+          "command": "restclient.deleteCookieDomain",
+          "when": "false"
+        },
+        {
+          "command": "restclient.convertCollection",
+          "when": "false"
         }
       ],
       "view/title": [
         {
-          "command": "restclient.newRequest",
-          "when": "view == restclient.collections && restclient:hasCollections",
+          "command": "restclient.newCollection",
+          "when": "view == restclient.collections",
           "group": "navigation@1"
         },
         {
-          "command": "restclient.import",
+          "command": "restclient.importCollection",
           "when": "view == restclient.collections",
           "group": "navigation@2"
         },
         {
-          "command": "restclient.selectEnvironment",
-          "when": "view == restclient.collections",
+          "command": "restclient.filterCollections",
+          "when": "view == restclient.collections && restclient:hasCollections",
           "group": "navigation@3"
         },
         {
-          "command": "restclient.refresh",
-          "when": "view == restclient.collections",
+          "command": "restclient.clearCollectionsFilter",
+          "when": "view == restclient.collections && restclient:collectionsFiltered",
           "group": "navigation@4"
         },
         {
-          "command": "restclient.newFolder",
+          "command": "restclient.exportAllCollections",
           "when": "view == restclient.collections && restclient:hasCollections",
-          "group": "1_new@1"
-        },
-        {
-          "command": "restclient.editEnvironment",
-          "when": "view == restclient.collections",
-          "group": "1_new@2"
+          "group": "1_export@1"
         },
         {
           "command": "restclient.showConsole",
           "when": "view == restclient.collections",
-          "group": "1_new@3"
+          "group": "2_tools@1"
         },
         {
           "command": "restclient.clearConsole",
@@ -374,80 +606,200 @@
           "group": "navigation@1"
         },
         {
-          "command": "restclient.manageCookies",
-          "when": "view == restclient.collections",
-          "group": "1_new@4"
-        },
-        {
           "command": "restclient.newEnvironment",
           "when": "view == restclient.environments",
           "group": "navigation@1"
         },
         {
-          "command": "restclient.import",
+          "command": "restclient.importEnvironment",
           "when": "view == restclient.environments",
           "group": "navigation@2"
         },
         {
-          "command": "restclient.refresh",
-          "when": "view == restclient.environments",
+          "command": "restclient.filterEnvironments",
+          "when": "view == restclient.environments && restclient:hasEnvironments",
           "group": "navigation@3"
+        },
+        {
+          "command": "restclient.clearEnvironmentsFilter",
+          "when": "view == restclient.environments && restclient:environmentsFiltered",
+          "group": "navigation@4"
+        },
+        {
+          "command": "restclient.clearActiveEnvironment",
+          "when": "view == restclient.environments && restclient:hasEnvironments",
+          "group": "1_active@1"
+        },
+        {
+          "command": "restclient.editEnvironment",
+          "when": "view == restclient.environments && restclient:hasEnvironments",
+          "group": "1_active@2"
+        },
+        {
+          "command": "restclient.exportAllEnvironments",
+          "when": "view == restclient.environments && restclient:hasEnvironments",
+          "group": "2_export@1"
+        },
+        {
+          "command": "restclient.manageCookies",
+          "when": "view == restclient.cookies",
+          "group": "navigation@1"
+        },
+        {
+          "command": "restclient.clearCookies",
+          "when": "view == restclient.cookies",
+          "group": "1_clear@1"
+        },
+        {
+          "command": "restclient.openSettings",
+          "when": "view == restclient.collections",
+          "group": "navigation@9"
+        },
+        {
+          "command": "restclient.openSettings",
+          "when": "view == restclient.environments",
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [
         {
+          "command": "restclient.runRequest",
+          "when": "view == restclient.collections && viewItem == request",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.stopRun",
+          "when": "view == restclient.collections && viewItem == requestRunning",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.runRequest",
+          "when": "view == restclient.collections && viewItem == request",
+          "group": "0_run@1"
+        },
+        {
+          "command": "restclient.stopRun",
+          "when": "view == restclient.collections && viewItem == requestRunning",
+          "group": "0_run@1"
+        },
+        {
+          "command": "restclient.runAll",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "restclient.stopRun",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?Running$/",
+          "group": "inline@0"
+        },
+        {
           "command": "restclient.newRequest",
-          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)$/",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?(Running)?$/",
           "group": "inline@1"
         },
         {
           "command": "restclient.newFolder",
-          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)$/",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?(Running)?$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "restclient.newRequest",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?(Running)?$/",
+          "group": "1_new@1"
+        },
+        {
+          "command": "restclient.newFolder",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?(Running)?$/",
           "group": "1_new@2"
         },
         {
           "command": "restclient.openCollectionFile",
-          "when": "view == restclient.collections && viewItem == collection",
-          "group": "inline@2"
+          "when": "view == restclient.collections && viewItem =~ /^collection(Expanded|Collapsed|Broken|Unsupported)?(Running)?$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "restclient.expandRow",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)Collapsed(Running)?$/",
+          "group": "inline@4"
+        },
+        {
+          "command": "restclient.collapseRow",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)Expanded(Running)?$/",
+          "group": "inline@4"
+        },
+        {
+          "command": "restclient.openCollectionFile",
+          "when": "view == restclient.collections && viewItem =~ /^collection(Expanded|Collapsed|Broken|Unsupported)?(Running)?$/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "restclient.exportCollection",
+          "when": "view == restclient.collections && viewItem =~ /^collection(Expanded|Collapsed)?(Running)?$/",
+          "group": "1_open@2"
         },
         {
           "command": "restclient.rename",
-          "when": "view == restclient.collections && viewItem =~ /^(request|folder)$/",
+          "when": "view == restclient.collections && viewItem =~ /^(request|folder)(Expanded|Collapsed)?(Running)?$/",
           "group": "2_edit@1"
         },
         {
           "command": "restclient.duplicate",
-          "when": "view == restclient.collections && viewItem =~ /^(request|folder)$/",
+          "when": "view == restclient.collections && viewItem =~ /^(request|folder)(Expanded|Collapsed)?(Running)?$/",
           "group": "2_edit@2"
         },
         {
           "command": "restclient.delete",
-          "when": "view == restclient.collections && viewItem =~ /^(request|folder)$/",
+          "when": "view == restclient.collections && viewItem =~ /^(request|folder)(Expanded|Collapsed)?(Running)?$/",
           "group": "3_destructive@1"
         },
         {
           "command": "restclient.removeFromWorkspace",
-          "when": "view == restclient.collections && viewItem == collection",
+          "when": "view == restclient.collections && viewItem =~ /^collection(Expanded|Collapsed|Broken|Unsupported|Missing)?(Running)?$/",
           "group": "9_remove"
         },
         {
-          "command": "restclient.addVariable",
-          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "command": "restclient.setActiveEnvironment",
+          "when": "view == restclient.environments && viewItem == environment",
           "group": "inline@1"
         },
         {
-          "command": "restclient.editEnvironment",
-          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "command": "restclient.clearActiveEnvironment",
+          "when": "view == restclient.environments && viewItem == environmentActive",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.addVariable",
+          "when": "view == restclient.environments && viewItem =~ /^environment(Active)?$/",
           "group": "inline@2"
         },
         {
+          "command": "restclient.editEnvironment",
+          "when": "view == restclient.environments && viewItem =~ /^environment(Active)?$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "restclient.setActiveEnvironment",
+          "when": "view == restclient.environments && viewItem == environment",
+          "group": "0_active@1"
+        },
+        {
+          "command": "restclient.clearActiveEnvironment",
+          "when": "view == restclient.environments && viewItem == environmentActive",
+          "group": "0_active@1"
+        },
+        {
           "command": "restclient.openEnvironmentFile",
-          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "when": "view == restclient.environments && viewItem =~ /^environment(Active|Broken|Unsupported)?$/",
           "group": "1_open@1"
         },
         {
+          "command": "restclient.exportEnvironment",
+          "when": "view == restclient.environments && viewItem =~ /^environment(Active)?$/",
+          "group": "1_open@2"
+        },
+        {
           "command": "restclient.removeEnvironment",
-          "when": "view == restclient.environments && viewItem =~ /^environment/",
+          "when": "view == restclient.environments && viewItem =~ /^environment(Active|Broken|Unsupported|Missing)?$/",
           "group": "9_remove@1"
         },
         {
@@ -474,12 +826,72 @@
           "command": "restclient.toggleVariableSecret",
           "when": "view == restclient.environments && viewItem =~ /^variable/",
           "group": "2_edit@2"
+        },
+        {
+          "command": "restclient.deleteCookieDomain",
+          "when": "view == restclient.cookies && viewItem == cookieDomain",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.editCookie",
+          "when": "view == restclient.cookies && viewItem == cookie",
+          "group": "inline@1"
+        },
+        {
+          "command": "restclient.deleteCookie",
+          "when": "view == restclient.cookies && viewItem == cookie",
+          "group": "inline@2"
+        },
+        {
+          "command": "restclient.deleteCookieDomain",
+          "when": "view == restclient.cookies && viewItem == cookieDomain",
+          "group": "3_destructive@1"
+        },
+        {
+          "command": "restclient.editCookie",
+          "when": "view == restclient.cookies && viewItem == cookie",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "restclient.deleteCookie",
+          "when": "view == restclient.cookies && viewItem == cookie",
+          "group": "3_destructive@1"
+        },
+        {
+          "command": "restclient.runAll",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?$/",
+          "group": "0_run@1"
+        },
+        {
+          "command": "restclient.stopRun",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?Running$/",
+          "group": "0_run@1"
+        },
+        {
+          "command": "restclient.openOverview",
+          "when": "view == restclient.collections && viewItem =~ /^(collection|folder)(Expanded|Collapsed)?(Running)?$/",
+          "group": "0_run@2"
+        },
+        {
+          "command": "restclient.convertCollection",
+          "when": "view == restclient.collections && viewItem == collectionUnsupported",
+          "group": "inline@0"
+        },
+        {
+          "command": "restclient.convertCollection",
+          "when": "view == restclient.collections && viewItem == collectionUnsupported",
+          "group": "1_open@1"
         }
       ],
       "explorer/context": [
         {
-          "command": "restclient.import",
-          "when": "resourceFilename =~ /postman_(collection|environment|globals)\\.json$/",
+          "command": "restclient.importCollection",
+          "when": "resourceFilename =~ /postman_collection\\.json$/",
+          "group": "7_modification"
+        },
+        {
+          "command": "restclient.importEnvironment",
+          "when": "resourceFilename =~ /postman_(environment|globals)\\.json$/",
           "group": "7_modification"
         }
       ]
@@ -491,7 +903,7 @@
           "type": "array",
           "default": [],
           "scope": "resource",
-          "markdownDescription": "Postman collection files this workspace works on, edited in place. Paths are relative to the workspace folder; absolute and `~/`-prefixed paths are also accepted.",
+          "markdownDescription": "Postman collection files this workspace works on, named explicitly and edited in place. Paths are relative to the workspace folder; absolute and `~/`-prefixed paths are also accepted. Files the workspace scan finds are worked on too and are *not* listed here — see `#restclient.autoDiscover#`. Relative paths are relative to the folder whose settings name them; in a multi-root workspace every folder's list is used, not just the first one's.",
           "items": {
             "type": "string"
           }
@@ -500,10 +912,44 @@
           "type": "array",
           "default": [],
           "scope": "resource",
-          "markdownDescription": "Postman environment files this workspace works on, edited in place. Paths are relative to the workspace folder; absolute and `~/`-prefixed paths are also accepted.",
+          "markdownDescription": "Postman environment files this workspace works on, named explicitly and edited in place. Paths are relative to the workspace folder; absolute and `~/`-prefixed paths are also accepted. Files the workspace scan finds are worked on too and are *not* listed here — see `#restclient.autoDiscover#`. Relative paths are relative to the folder whose settings name them; in a multi-root workspace every folder's list is used, not just the first one's.",
           "items": {
             "type": "string"
           }
+        },
+        "restclient.autoDiscover": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Work on Postman collections and environments found in the workspace, without listing them. Discovered files are never written to `#restclient.collections#` or `#restclient.environments#` — those stay the explicit list, for files with unconventional names or outside the workspace. Turn this off to work only on what they name. Set per folder: in a multi-root workspace each folder decides for itself, so a repo that opts out does not stop a folder you added purely to hold collections from being scanned."
+        },
+        "restclient.discoverPatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/*.postman_collection.json",
+            "**/*.postman_environment.json",
+            "**/*.postman_globals.json"
+          ],
+          "scope": "resource",
+          "markdownDescription": "Glob patterns the workspace scan looks for, relative to the workspace folder. Whether a match is a collection or an environment is read from the file, not from its name. All `.json` files under `#restclient.importLocation#` are scanned as well, without being listed here. `#files.exclude#` and `#search.exclude#` are honoured on top of these. Read per folder in a multi-root workspace, so each folder can be named its own way."
+        },
+        "restclient.discoverExclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Paths and glob patterns the workspace scan skips. *Stop Working on This Collection* records its answer here, since a file nobody listed cannot be removed from a list. Delete an entry to have the scan pick the file up again. A file named in `#restclient.collections#` is unaffected — saying so explicitly outranks this."
+        },
+        "restclient.importLocation": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Folder that imported collections and environments are copied into, relative to the workspace folder. Empty means the next import asks, and remembers the answer here. A file already inside the workspace is worked on where it is and never copied. Every `.json` file under this folder is scanned whatever it is named, on top of `#restclient.discoverPatterns#` — anything that is not a Postman export is ignored. Read per folder in a multi-root workspace; the first folder that names one is where imports land."
         },
         "restclient.followRedirects": {
           "type": "boolean",

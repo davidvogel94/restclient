@@ -21,6 +21,50 @@ const runnerPath = path.join(dir, 'extension', 'dist', 'runner.js');
 assert.ok(fs.existsSync(runnerPath), 'packaged runner missing');
 console.log('extracted to', dir);
 
+/**
+ * Every unbundled require in the two bundles, loaded out of the packaged tree.
+ *
+ * The extension host requires these at module load, so one that cannot resolve
+ * — or that resolves to a wrong-major transitive dep — takes activation down
+ * before a single command is registered, and every button in the UI reports
+ * "command not found". The dev tree cannot show it: only vsce decides which
+ * nested copies of a package get packaged, and it has been wrong about that
+ * (a hoisted lru-cache@10 shipped where semver wanted lru-cache@6).
+ *
+ * Derived from the bundles rather than listed by hand, so adding an external
+ * to esbuild.mjs brings it under this check automatically.
+ */
+function externalRequires(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  const specs = new Set();
+  for (const [, spec] of source.matchAll(/require\(\s*["'](@?[a-z][^"'.][^"']*)["']\s*\)/g)) {
+    // 'vscode' is supplied by the host, and builtins are never packaged.
+    if (spec === 'vscode' || require('node:module').isBuiltin(spec)) { continue; }
+    specs.add(spec);
+  }
+  return [...specs].sort();
+}
+
+const extensionDir = path.join(dir, 'extension');
+for (const bundle of ['extension.js', 'runner.js']) {
+  const specs = externalRequires(path.join(extensionDir, 'dist', bundle));
+  for (const spec of specs) {
+    try {
+      execFileSync(process.execPath, ['-e', `require(${JSON.stringify(spec)})`], {
+        cwd: extensionDir,
+        stdio: 'pipe'
+      });
+    } catch (e) {
+      console.error(`\ndist/${bundle} requires "${spec}", which does not load from the packaged node_modules:`);
+      console.error(String(e.stderr ?? e).trim());
+      console.error('\nA nested dependency is probably missing from the .vsix — compare');
+      console.error('`vsce ls` against `npm ls --omit=dev --all`.\n');
+      process.exit(1);
+    }
+  }
+  console.log(`dist/${bundle}: ${specs.length} external require(s) load from the packaged tree`);
+}
+
 const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify({ ok: true, auth: req.headers.authorization ?? null }));

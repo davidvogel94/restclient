@@ -1,0 +1,72 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Background task behind the two `Run Extension` launches. The matcher's
+      // begin/end patterns come from the [watch] markers esbuild.mjs prints in
+      // watch mode; without them VS Code waits forever for the task to "finish".
+      "label": "npm: watch",
+      "type": "npm",
+      "script": "watch",
+      "isBackground": true,
+      "presentation": {
+        "group": "watch",
+        "reveal": "never"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": {
+        "owner": "esbuild",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        // Best-effort: esbuild's plain-text diagnostics. Type errors are not
+        // reported here at all — esbuild only transpiles; run "npm: check".
+        "pattern": {
+          "regexp": "^\\s*(\\S+?):(\\d+):(\\d+): (?:ERROR|error|WARNING|warning): (.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^\\[watch\\] build started",
+          "endsPattern": "^\\[watch\\] (build finished|esbuild watching)"
+        }
+      }
+    },
+    {
+      "label": "npm: build",
+      "type": "npm",
+      "script": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "npm: check",
+      "type": "npm",
+      "script": "check",
+      "problemMatcher": "$tsc"
+    },
+    {
+      "label": "npm: compile:test",
+      "type": "npm",
+      "script": "compile:test",
+      "problemMatcher": "$tsc"
+    },
+    {
+      // What the test launches use: the bundles the extension host loads, plus
+      // the plain-tsc output the test files themselves live in.
+      "label": "build: extension + tests",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "npm: build",
+        "npm: compile:test"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

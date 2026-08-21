@@ -1,16 +1,25 @@
 import * as vscode from 'vscode';
+import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { buildRequestView, kv } from '../collections/view';
 import { AUTH_FIELDS, AUTH_TYPES, buildRequestEdits } from '../collections/edits';
 import type { CollectionEntry, CollectionStore } from '../collections/store';
 import type { ItemNode } from '../collections/model';
+import { readSettingDefaults } from '../runner/networkSettings';
 import type { RunService } from '../runner/runService';
 import type { RunHandle } from '../runner/client';
 import type { ConsoleLine, EnvironmentSummary, FromWebview, ToWebview } from './protocol';
-import { ResponseCache, type CachedResponse } from './responseCache';
+import type { CachedResponse } from './responseCache';
+import type { RunResults } from './runResults';
 import { VisualizerPanel } from './visualizerPanel';
 
 export const VIEW_TYPE = 'restclient.request';
+
+/** Which request an editor tab is for, as the Collections pane identifies it. */
+export interface RequestTab {
+  uri: vscode.Uri;
+  itemId: string;
+}
 
 function nonce(): string {
   return randomBytes(16).toString('base64');
@@ -18,32 +27,41 @@ function nonce(): string {
 
 export class RequestPanelManager implements vscode.Disposable {
   private readonly panels = new Map<string, RequestPanel>();
+
+  private readonly _onDidActivate = new vscode.EventEmitter<RequestTab>();
   /**
-   * Survives panel disposal so closing and reopening a request keeps its last
-   * response. In memory only — see ResponseCache.
+   * Fires when one of these tabs comes to the front, first opened included.
+   *
+   * The Collections pane listens: the row and the tab in front should be
+   * describing the same request, whichever of the two the user moved.
    */
-  private readonly responses = new ResponseCache();
+  readonly onDidActivate = this._onDidActivate.event;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly store: CollectionStore,
     private readonly runService: RunService,
-    private readonly activeEnvironmentId: () => string | undefined
+    private readonly activeEnvironmentId: () => string | undefined,
+    /** Where every run's result is filed, whoever started it. */
+    private readonly results: RunResults
   ) {
     store.onDidChange(() => {
       for (const panel of this.panels.values()) { void panel.refresh(); }
     });
-  }
-
-  private key(entry: CollectionEntry, node: ItemNode): string {
-    return `${entry.uri.toString()}::${node.id}`;
+    // A folder run, or a quick-run from the overview, writes results for
+    // requests this manager may have open. Those editors should show them.
+    results.onDidChangeResults(() => {
+      for (const panel of this.panels.values()) { panel.syncExternalResult(); }
+    });
   }
 
   open(entry: CollectionEntry, node: ItemNode): RequestPanel {
-    const key = this.key(entry, node);
+    const key = this.results.key(entry.uri, node.id);
+    const tab: RequestTab = { uri: entry.uri, itemId: node.id };
     const existing = this.panels.get(key);
     if (existing) {
       existing.reveal();
+      this._onDidActivate.fire(tab);
       return existing;
     }
 
@@ -54,12 +72,25 @@ export class RequestPanelManager implements vscode.Disposable {
       this.activeEnvironmentId,
       entry.uri,
       node.id,
-      this.responses,
+      this.results,
       key,
       () => this.panels.delete(key)
     );
     this.panels.set(key, panel);
+    panel.onDidActivate(() => this._onDidActivate.fire(tab));
+    // Fired for the tab just created as well: a panel is made in front of
+    // whatever was there, and no view state *change* is reported for the state
+    // a panel was born in.
+    this._onDidActivate.fire(tab);
     return panel;
+  }
+
+  /** The request whose tab is in front, if one of them is. */
+  activeTab(): RequestTab | undefined {
+    for (const panel of this.panels.values()) {
+      if (panel.isActive) { return panel.tab; }
+    }
+    return undefined;
   }
 
   /** Push a fresh environment list into every open panel. */
@@ -67,15 +98,10 @@ export class RequestPanelManager implements vscode.Disposable {
     for (const panel of this.panels.values()) { void panel.pushEnvironments(); }
   }
 
-  /** Drop every cached response. Nothing was persisted, so this is the lot. */
-  clearResponses(): void {
-    this.responses.clear();
-  }
-
   dispose(): void {
     for (const panel of this.panels.values()) { panel.dispose(); }
     this.panels.clear();
-    this.responses.clear();
+    this._onDidActivate.dispose();
   }
 }
 
@@ -85,8 +111,23 @@ export class RequestPanel implements vscode.Disposable {
   private running: RunHandle | undefined;
   private consoleBuffer: ConsoleLine[] = [];
   private current: CachedResponse | undefined;
+  /**
+   * True from the moment Send is pressed until the result is filed.
+   *
+   * `running` only holds once the runner has handed back a handle, which leaves
+   * a window in which this panel's own start looks, to `syncExternalResult`,
+   * like somebody else's — and would replay the *previous* result over the run
+   * just begun.
+   */
+  private sending = false;
+  /** A run this panel did not start, so its end can be reported once. */
+  private watchingExternal = false;
   /** `refresh` awaits the keychain, so the panel can go away mid-flight. */
   private disposed = false;
+
+  private readonly _onDidActivate = new vscode.EventEmitter<void>();
+  /** Fires whenever this tab becomes the front one. */
+  readonly onDidActivate = this._onDidActivate.event;
 
   private markReady!: () => void;
   /**
@@ -103,7 +144,7 @@ export class RequestPanel implements vscode.Disposable {
     private readonly activeEnvironmentId: () => string | undefined,
     private readonly collectionUri: vscode.Uri,
     private readonly itemId: string,
-    private readonly responses: ResponseCache,
+    private readonly results: RunResults,
     private readonly cacheKey: string,
     private readonly onDisposed: () => void
   ) {
@@ -126,8 +167,25 @@ export class RequestPanel implements vscode.Disposable {
 
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: FromWebview) => void this.onMessage(msg)),
-      this.panel.onDidDispose(() => this.dispose())
+      this.panel.onDidChangeViewState((e) => { if (e.webviewPanel.active) { this._onDidActivate.fire(); } }),
+      this.panel.onDidDispose(() => this.dispose()),
+      this._onDidActivate
     );
+  }
+
+  /** Which request this tab is for. */
+  get tab(): RequestTab {
+    return { uri: this.collectionUri, itemId: this.itemId };
+  }
+
+  /**
+   * Whether this is the tab in front.
+   *
+   * Guarded on `disposed`: a panel that has gone answers nothing, and one is
+   * disposed a moment before its manager drops it.
+   */
+  get isActive(): boolean {
+    return !this.disposed && this.panel.active;
   }
 
   private entry(): CollectionEntry | undefined {
@@ -191,7 +249,8 @@ export class RequestPanel implements vscode.Disposable {
       collectionVariables: kv(entry.materialized.json.variable),
       scriptsAllowed: this.runService.scriptsAllowed,
       authTypes: AUTH_TYPES,
-      authFields: AUTH_FIELDS
+      authFields: AUTH_FIELDS,
+      settingDefaults: readSettingDefaults()
     });
   }
 
@@ -201,7 +260,7 @@ export class RequestPanel implements vscode.Disposable {
         this.markReady();
         await this.refresh();
         // A reopened editor should still show what came back last time.
-        this.replay(this.current ?? this.responses.get(this.cacheKey));
+        this.replay(this.current ?? this.results.get(this.cacheKey));
         return;
 
       case 'selectEnvironment':
@@ -214,8 +273,15 @@ export class RequestPanel implements vscode.Disposable {
         return;
       }
 
+      /**
+       * Stop the run being shown, which may not be this panel's own: Run All
+       * lights up every editor it reaches, and the editor is where you are
+       * watching it from. The run service knows every handle; this panel only
+       * knows the one it started.
+       */
       case 'cancel':
-        this.running?.abort();
+        if (this.running) { this.running.abort(); }
+        else { this.runService.stop(this.collectionUri, this.itemId); }
         return;
 
       case 'manageCookies':
@@ -230,6 +296,9 @@ export class RequestPanel implements vscode.Disposable {
 
       case 'moveSecretToKeychain':
         return this.moveSecret(msg.key);
+
+      case 'pickFile':
+        return this.pickFile(msg.token);
 
       case 'editEnvironment':
         await vscode.commands.executeCommand('restclient.editEnvironment');
@@ -284,6 +353,49 @@ export class RequestPanel implements vscode.Disposable {
     if (cached.failure) { this.post({ type: 'runFailed', message: cached.failure }); }
   }
 
+  /**
+   * Let the user browse for a file to upload, as a path the runner can read.
+   *
+   * Uploads are read through WorkspaceFileResolver, which is jailed to the
+   * workspace, so the path is stored relative to a folder in it and a file from
+   * outside every folder is rejected here — while the dialog is still on screen
+   * — rather than as a request error at send time. Postman writes these paths
+   * with forward slashes, so the separator is normalised too.
+   *
+   * Relative to *this collection's* folder, which is the base the runner will
+   * resolve it against and the only one that survives someone else opening the
+   * folders in a different order.
+   */
+  private async pickFile(token: string): Promise<void> {
+    const root = this.store.rootFor(this.collectionUri) ?? this.store.workspaceRoot;
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      openLabel: 'Attach',
+      title: 'Select a file to upload',
+      defaultUri: root ? vscode.Uri.file(root) : undefined
+    });
+    const chosen = picked?.[0];
+    if (!chosen) { return this.post({ type: 'filePicked', token }); }
+
+    if (!root) {
+      void vscode.window.showWarningMessage(
+        'Open a workspace folder first: files are uploaded from paths relative to it.'
+      );
+      return this.post({ type: 'filePicked', token });
+    }
+
+    const relative = path.relative(root, chosen.fsPath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      void vscode.window.showWarningMessage(
+        `${path.basename(chosen.fsPath)} is outside ${path.basename(root)}, so the request could not ` +
+          'read it. Add its folder to the workspace, or move the file in.'
+      );
+      return this.post({ type: 'filePicked', token });
+    }
+
+    this.post({ type: 'filePicked', token, path: relative.split(path.sep).join('/') });
+  }
+
   /** Move one plaintext secret out of the environment file, on request. */
   private async moveSecret(key: string): Promise<void> {
     try {
@@ -315,26 +427,56 @@ export class RequestPanel implements vscode.Disposable {
     }
   }
 
-  /** Test seam: run this request as if Send had been pressed in the webview. */
-  sendForTest(): Promise<void> {
+  /** Run this request as if Send had been pressed in the webview. */
+  run(): Promise<void> {
     return this.send();
   }
 
   /** Test seam: what a freshly reopened panel would replay, if anything. */
   restoredForTest(): CachedResponse | undefined {
-    return this.current ?? this.responses.get(this.cacheKey);
+    return this.current ?? this.results.get(this.cacheKey);
+  }
+
+  /**
+   * Show a result this panel did not produce.
+   *
+   * Run All and the overview's quick-run both file their results in the same
+   * store, so an editor left open on one of those requests would otherwise sit
+   * showing the run before it. `runStarted` is what clears the webview, so it
+   * is posted first and the remembered result replayed onto the clean slate.
+   */
+  syncExternalResult(): void {
+    if (this.sending) { return; }
+
+    if (this.results.isRunning(this.cacheKey)) {
+      if (!this.watchingExternal) {
+        this.watchingExternal = true;
+        this.post({ type: 'runStarted' });
+      }
+      return;
+    }
+
+    const cached = this.results.get(this.cacheKey);
+    if (!this.watchingExternal && cached === this.current) { return; }
+    this.watchingExternal = false;
+    this.current = cached;
+    this.post({ type: 'runStarted' });
+    this.replay(cached);
+    this.post({ type: 'runFinished' });
   }
 
   private async send(): Promise<void> {
-    if (this.running) { return; }
+    if (this.sending) { return; }
     const entry = this.entry();
     if (!entry) { return; }
 
+    this.sending = true;
     this.consoleBuffer = [];
     // Rebuilt as the run progresses, then remembered so reopening the editor
     // shows the same thing. Never leaves memory.
     const result: CachedResponse = { assertions: [], console: [] };
     this.current = result;
+    this.results.setRunning(this.cacheKey, true);
     this.post({ type: 'runStarted' });
 
     try {
@@ -378,8 +520,11 @@ export class RequestPanel implements vscode.Disposable {
       this.post({ type: 'runFailed', message });
     } finally {
       this.running = undefined;
-      this.responses.set(this.cacheKey, result);
+      this.results.record(this.cacheKey, result);
       this.post({ type: 'runFinished' });
+      // After the result is filed, so a listener reading it sees this run.
+      this.sending = false;
+      this.results.setRunning(this.cacheKey, false);
     }
   }
 

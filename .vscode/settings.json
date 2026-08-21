@@ -1,0 +1,10 @@
+{
+    "restclient.environments": [],
+    "restclient.collections": [],
+    "restclient.discoverPatterns": [
+        "**/*.postman_collection.json",
+        "**/*.postman_environment.json",
+        "**/*.postman_globals.json",
+        "**.*.json"
+    ]
+}

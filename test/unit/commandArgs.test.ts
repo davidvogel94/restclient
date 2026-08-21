@@ -1,6 +1,13 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { envNodeArg, stringArg, treeNodeArg, uriArgs } from '../../src/commandArgs';
+import {
+  cookieNodeArg,
+  envNodeArg,
+  missingNodeArg,
+  stringArg,
+  treeNodeArg,
+  uriArgs
+} from '../../src/commandArgs';
 
 /** Enough of a vscode.Uri for the duck-typed guard. */
 function uri(fsPath: string): any {
@@ -66,4 +73,35 @@ test('envNodeArg only accepts Environments view nodes', () => {
   assert.equal(envNodeArg({ kind: 'environment' }), undefined, 'a node with no entry is not usable');
   assert.equal(envNodeArg('e1'), undefined);
   assert.equal(envNodeArg(undefined), undefined);
+});
+
+test('cookieNodeArg only accepts Cookies view rows', () => {
+  const domain: any = { kind: 'domain', domain: 'api.example.com', cookies: [] };
+  const cookie: any = {
+    kind: 'cookie',
+    domain: 'api.example.com',
+    cookie: { key: 'session', value: 'abc', domain: 'api.example.com', path: '/' }
+  };
+  assert.equal(cookieNodeArg(domain), domain);
+  assert.equal(cookieNodeArg(cookie), cookie);
+  assert.equal(cookieNodeArg(TREE_NODE), undefined);
+  assert.equal(cookieNodeArg({ kind: 'cookie' }), undefined, 'a row with no cookie is not usable');
+  assert.equal(cookieNodeArg({ kind: 'domain' }), undefined);
+  assert.equal(cookieNodeArg(undefined), undefined);
+});
+
+test('missingNodeArg only accepts a row for a file that is not on disk', () => {
+  const missing: any = {
+    kind: 'missing',
+    entry: { kind: 'collection', uri: { fsPath: '/ws/gone.json' }, name: 'gone.json' }
+  };
+  const broken: any = { kind: 'broken', entry: { problems: [] } };
+
+  assert.equal(missingNodeArg(missing), missing);
+  // The three unusable-file rows are told apart by kind, because the action
+  // each one supports is different.
+  assert.equal(missingNodeArg(broken), undefined);
+  assert.equal(missingNodeArg(TREE_NODE), undefined);
+  assert.equal(missingNodeArg({ kind: 'missing' }), undefined, 'a row with no entry is not usable');
+  assert.equal(missingNodeArg(undefined), undefined);
 });

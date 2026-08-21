@@ -270,10 +270,15 @@ class RunController {
       ? CookieJar.deserializeSync(options.cookieJar as any)
       : new CookieJar();
 
+    // Everything under `requester` below is only a *default*: the engine resolves
+    // each of these against the item's own `protocolProfileBehavior` first (see
+    // PPB_OPTS in postman-runtime/lib/requester/core.js), inherited down from
+    // the collection and folders. So a per-request setting always wins, and the
+    // workspace setting is what applies when nothing in the file has an opinion.
     const runOptions: Record<string, unknown> = {
       environment,
       globals,
-      fileResolver: new WorkspaceFileResolver(options.workspaceRoot),
+      fileResolver: new WorkspaceFileResolver(options.workspaceRoot, options.workspaceRoots),
       timeout: {
         global: options.timeout?.global ?? 0,
         request: options.timeout?.request ?? 0,
@@ -289,7 +294,8 @@ class RunController {
         disableCookies: options.disableCookies ?? false,
         maxResponseSize: maxBytes,
         cookieJar,
-        ...(options.protocolVersion ? { protocolVersion: options.protocolVersion } : {})
+        ...(options.protocolVersion ? { protocolVersion: options.protocolVersion } : {}),
+        ...(options.useWhatWGUrlParser ? { useWhatWGUrlParser: true } : {})
       }
     };
 

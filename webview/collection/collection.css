@@ -1,0 +1,349 @@
+/*
+ * The overview's own chrome. Everything shared with the request editor — tabs,
+ * tables, pills, editable cells — comes from ../request/styles.css.
+ */
+
+:root {
+  /*
+   * How wide the page is allowed to get.
+   *
+   * The point of the contents list is reading a request's details and what its
+   * last run did *together*; on a wide monitor an unbounded page pushes the
+   * status and test columns so far right that the two stop being one glance.
+   * Set to the contents table's own width plus the pane's padding, so Run All
+   * and the collapse control land exactly on the table's right edge rather than
+   * floating off in the empty space beyond it.
+   */
+  --rc-sheet: 1000px;
+  /* One level of folder nesting in the contents tree. */
+  --rc-indent: 20px;
+  /*
+   * How much further a request sits than the folder heading above it.
+   *
+   * A folder is a category, and one indent step shared with the heading left
+   * the two reading as one flat list with a bold line every so often. This is
+   * what makes "inside Orders" visible at a glance rather than inferred.
+   */
+  --rc-request-inset: 14px;
+  /*
+   * Every column of the contents table, stated outright.
+   *
+   * All four are pixel values on purpose. The table is what a status column is
+   * read against, so its geometry must not depend on what the rows happen to
+   * contain — collapsing a folder takes the long URLs with it, and a table
+   * sized to its content would shrink under the pointer mid-glance.
+   *
+   * `--rc-col-detail` is therefore also the wrapping measure for a request's
+   * name and URL: they wrap at the column edge, and the column does not move.
+   */
+  --rc-col-run: 40px;
+  --rc-col-detail: 768px;
+  --rc-col-status: 104px;
+  --rc-col-tests: 64px;
+}
+
+/* The constrained column everything is drawn in, centred in the window. */
+.sheet {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--rc-sheet);
+  /*
+   * Centred rather than flush left, so on a wide editor the sheet is not a
+   * column of content pinned to one edge with the rest of the pane empty. The
+   * auto margins collapse to nothing once the window is narrower than
+   * `--rc-sheet`, which leaves the narrow case exactly as it was.
+   */
+  margin-inline: auto;
+}
+
+/*
+ * The tabs whose content is a single editor, stretched to the pane.
+ *
+ * The overview is always a full-height editor tab, so unlike the request
+ * editor — where this only applies once the response sits beside the request —
+ * there is no narrow case to leave alone: a script or the description left at
+ * its own `min-height` is a box at the top of the window with a resize handle
+ * and a screenful of nothing beneath it, on every window size.
+ */
+.pane.fill {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The prose above the field, and any listing of inherited scripts below it,
+   keep the height they ask for. */
+.pane.fill > * { flex: 0 0 auto; }
+
+/* Grows into the slack, never shrinks: when a folder also lists the scripts it
+   inherits from the collection, the field you are typing in keeps its own
+   height and the pane scrolls, rather than collapsing to make room for a
+   read-only listing. Stretched to the pane, the drag handle has nothing left to
+   do, so it goes. */
+.pane.fill > .hl-wrap.grow {
+  flex: 1 0 auto;
+  resize: none;
+}
+
+/* --- header ------------------------------------------------------------- */
+
+.grouphead {
+  display: flex;
+  gap: var(--rc-gap);
+  align-items: flex-start;
+  padding: 8px 12px;
+}
+
+.grouphead .title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The name is edited in place, so it carries no chrome until you reach for it. */
+input.groupname {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 1px 4px;
+  margin-left: -4px;
+  font-family: inherit;
+  font-size: 1.25em;
+  font-weight: 600;
+  width: 100%;
+  max-width: 520px;
+}
+
+input.groupname:hover { border-color: var(--rc-border); }
+
+input.groupname:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+  background: var(--vscode-input-background);
+}
+
+/* Run All and the environment picker, pinned to the top right of the sheet. */
+.groupactions {
+  display: flex;
+  gap: var(--rc-gap);
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.tally {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* --- contents tree ------------------------------------------------------- */
+
+/*
+ * The filter box, with the expand/collapse control on its right.
+ *
+ * Above the table rather than in the header, because it belongs to this tab
+ * only: Auth and Variables have nothing to filter, and a control that greys
+ * itself out on four of six tabs is worse than one that is simply not there.
+ */
+.treebar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.treebar > .codicon-filter {
+  color: var(--vscode-descriptionForeground);
+  flex: 0 0 auto;
+}
+
+/* The collapse control keeps the right edge; the box takes what is left. */
+.treebar .searchbox { flex: 1 1 auto; }
+
+/*
+ * Stated columns, so the layout does not move when the content does.
+ *
+ * `width: auto` overrides the shared stylesheet's full-width tables, which
+ * would park the status and test columns against the far edge of a wide window
+ * with a few hundred pixels of nothing between them and the request they
+ * describe. With every column given a width, the table's own width is their
+ * sum — the same whether a folder is open or shut, which is the point.
+ *
+ * Deliberately *not* `table-layout: fixed`: under it a percentage or `calc()`
+ * column width resolves against the column total rather than the table, which
+ * leaves the slack sitting as a gap between two columns. Auto layout treats a
+ * stated width as the column's floor instead, and `overflow-wrap: anywhere` on
+ * the URL keeps its min-content small enough that the floor is what wins.
+ */
+table.contents {
+  width: auto;
+  max-width: 100%;
+}
+
+table.contents td,
+table.contents th { vertical-align: top; }
+
+th.run { width: var(--rc-col-run); }
+th.detail { width: var(--rc-col-detail); }
+th.status { width: var(--rc-col-status); }
+th.tests { width: var(--rc-col-tests); }
+
+/*
+ * One indent step per level of nesting, applied once per row: the `--depth` on
+ * the cell reaches everything inside it, so the URL line below stays under the
+ * name it belongs to instead of computing its own offset.
+ */
+td.detail { --depth: 0; }
+
+.reqbody { padding-left: calc(var(--depth) * var(--rc-indent) + var(--rc-request-inset)); }
+
+/* Method and name on one line; the URL gets its own, below. */
+.reqline {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.verb {
+  flex: 0 0 auto;
+  font-family: var(--vscode-editor-font-family);
+  font-weight: 700;
+  font-size: 0.85em;
+}
+
+.verb[data-method='GET'] { color: var(--vscode-charts-green); }
+.verb[data-method='POST'] { color: var(--vscode-charts-yellow); }
+.verb[data-method='PUT'] { color: var(--vscode-charts-blue); }
+.verb[data-method='PATCH'] { color: var(--vscode-charts-purple); }
+.verb[data-method='DELETE'] { color: var(--vscode-charts-red); }
+
+/* The request name, which opens its editor. */
+button.reqname {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  color: var(--vscode-foreground);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+/* Kept for the keyboard: the button still shows its own focus. */
+button.reqname:hover:not(:disabled) { background: none; }
+
+/*
+ * The URL, on its own indented line with a rule down its left edge.
+ *
+ * A URL is routinely longer than any sensible column, and the two ways out of
+ * that — scroll the window sideways, or ellipsize it — either break the page or
+ * hide the part that identifies the request. So it wraps, and the rule plus the
+ * extra indent keep it legible as detail belonging to the line above rather
+ * than a row of its own.
+ */
+.requrl {
+  margin: 2px 0 0 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--rc-border);
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+  /* Break mid-token if it comes to it: a query string has nowhere else to go. */
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* --- folder rows --------------------------------------------------------- */
+
+/*
+ * A category heading, not just another row: it is read down the page as the
+ * structure of the collection, so it carries its own weight and a band of space
+ * above it. The space goes on the cells rather than as a margin because a
+ * `<tr>` cannot take one — and it is dropped for the first row, where there is
+ * no previous category to be separated from.
+ */
+tr.folderrow > td {
+  /* The shared stylesheet's wash rather than `editorWidget.background`, which a
+     good number of themes set to exactly their editor background — leaving the
+     band that marks a category invisible in precisely those themes. */
+  background: var(--rc-wash-1);
+  border-bottom-color: var(--rc-border);
+  border-top: 1px solid var(--rc-border);
+  padding-top: 14px;
+}
+
+tbody > tr.folderrow:first-child > td {
+  border-top: none;
+  padding-top: 4px;
+}
+
+button.foldername {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 1.1em;
+  padding: 0;
+  margin-left: calc(var(--depth) * var(--rc-indent));
+  background: none;
+  color: var(--vscode-foreground);
+  font-weight: 600;
+  text-align: left;
+}
+
+button.foldername:hover:not(:disabled) { background: none; }
+button.foldername:hover .fname { text-decoration: underline; }
+
+button.foldername .fname { overflow-wrap: anywhere; }
+
+/* The chevron and the folder, a shade larger than the name they sit beside. */
+button.foldername .codicon {
+  font-size: 1.15em;
+  flex: 0 0 auto;
+}
+
+.fcount {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 400;
+  font-size: 0.78em;
+  white-space: nowrap;
+}
+
+/* --- run state ----------------------------------------------------------- */
+
+.spin { animation: rc-spin 1.2s linear infinite; }
+@keyframes rc-spin { to { transform: rotate(360deg); } }
+
+.queued { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+.never { color: var(--vscode-descriptionForeground); }
+
+tr.active > td { background: var(--vscode-list-inactiveSelectionBackground); }
+
+/*
+ * A request row is one click target, the way the tree row it mirrors is.
+ *
+ * The hover band is what says so — a row that acts like a button and looks like
+ * a table cell is a row nobody clicks — and it wins over the running row's
+ * highlight, which is state rather than an answer to the pointer.
+ */
+tr.reqrow { cursor: pointer; }
+tr.reqrow:hover > td { background: var(--vscode-list-hoverBackground); }
+
+/* Hovering anywhere on the row picks out the name it would open. */
+tr.reqrow:hover .reqname {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+  text-decoration: underline;
+}
+
+.note {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  margin: 0 0 8px;
+}

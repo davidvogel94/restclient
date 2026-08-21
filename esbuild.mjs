@@ -23,6 +23,19 @@ const POSTMAN_STACK = [
   'postman-sandbox'
 ];
 
+/**
+ * Progress markers for the .vscode/tasks.json background problem matcher: the
+ * `Run Extension` launch waits for "[watch] build finished" before it starts
+ * the extension host. The esbuild JS API prints nothing of the sort itself.
+ */
+const watchMarkers = {
+  name: 'watch-markers',
+  setup(build) {
+    build.onStart(() => console.log('[watch] build started'));
+    build.onEnd(() => console.log('[watch] build finished'));
+  }
+};
+
 /** Node-side bundles: the extension host entry and the forked runner. */
 const nodeCommon = {
   bundle: true,
@@ -44,7 +57,8 @@ const nodeCommon = {
   },
   sourcemap: !prod,
   minify: prod,
-  logLevel: 'info'
+  logLevel: 'info',
+  plugins: watch ? [watchMarkers] : []
 };
 
 const contexts = [
@@ -87,7 +101,8 @@ if (webviewApps.length) {
         esbuildSvelte({
           preprocess: sveltePreprocess(),
           compilerOptions: { css: 'external' }
-        })
+        }),
+        ...(watch ? [watchMarkers] : [])
       ]
     })
   );

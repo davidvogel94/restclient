@@ -13,15 +13,27 @@
     bodyLanguage,
     contentTypeLanguage,
     highlight,
+    languageTokens,
+    mergeTokens,
     renderTokens,
-    variableTokens
+    variableTokens,
+    type TokenClass
   } from '../../src/shared/highlight';
+  import {
+    compileSearch,
+    jsonMatches,
+    matchTokens,
+    MATCH_LIMIT,
+    type Matcher
+  } from '../../src/shared/search';
   import { formatBody } from '../../src/shared/format';
   import KeyValueTable from './KeyValueTable.svelte';
+  import SettingsTab from './SettingsTab.svelte';
   import HighlightedField from '../shared/HighlightedField.svelte';
   import VariablePopover from '../shared/VariablePopover.svelte';
   import JsonTree from '../shared/JsonTree.svelte';
   import { buildResolver, type VarHover } from '../shared/vars';
+  import type { SettingValue } from '../../src/collections/settings';
 
   declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
   const vscode = acquireVsCodeApi();
@@ -38,6 +50,7 @@
   let scriptsAllowed = $state(true);
   let authTypes = $state<readonly string[]>([]);
   let authFields = $state<Record<string, string[]>>({});
+  let settingDefaults = $state<Record<string, SettingValue>>({});
 
   let running = $state(false);
   let response = $state<SerializedResponse | undefined>(undefined);
@@ -53,6 +66,43 @@
   /** How the response body is rendered: formatted, verbatim, or as a tree. */
   let resView = $state<'pretty' | 'raw' | 'tree'>('pretty');
   let wrap = $state(true);
+
+  /**
+   * Searching the response.
+   *
+   * One query across every response tab rather than one per tab: "where does
+   * this token appear" is a question about the whole exchange, and the tab
+   * counts turn into `matched/total` so the answer is visible without opening
+   * each one. Rows filter, text highlights and steps.
+   */
+  let query = $state('');
+  /**
+   * What the views are actually searching for. A keystroke re-renders the whole
+   * response — a megabyte of highlighted body included — so the box runs ahead
+   * of the search by a beat rather than repainting on every letter.
+   */
+  let appliedQuery = $state('');
+  let searchRegex = $state(false);
+  let searchCase = $state(false);
+  let searchBox = $state<HTMLInputElement | undefined>(undefined);
+  /** The block the step buttons walk: whichever body view is on screen. */
+  let matchHost = $state<HTMLElement | undefined>(undefined);
+  let currentMatch = $state(0);
+
+  $effect(() => {
+    const next = query;
+    // Clearing is instant: nobody waits to see the response come back whole.
+    if (!next) { appliedQuery = ''; return; }
+    const timer = setTimeout(() => (appliedQuery = next), 120);
+    return () => clearTimeout(timer);
+  });
+
+  const search = $derived(
+    compileSearch(appliedQuery, { regex: searchRegex, caseSensitive: searchCase })
+  );
+  const matcher = $derived<Matcher | undefined>(
+    search.kind === 'ready' ? search.matcher : undefined
+  );
 
   /**
    * Writing to the file triggers a reload, which pushes a fresh `init` back.
@@ -75,6 +125,16 @@
   const resolver = $derived(buildResolver(environments, collectionVariables));
 
   /**
+   * Colouring for `:name` segments of the URL. A path variable is only
+   * substituted when it has a value (postman-collection's `Url#getPath`), so an
+   * empty one is flagged the way a missing `{{variable}}` is.
+   */
+  const pathClassify = $derived(
+    (name: string): TokenClass =>
+      request?.pathVariables.some((v) => v.key === name && v.value) ? 'path-ok' : 'path-missing'
+  );
+
+  /**
    * The inline variable editor. Hovering a token opens it; it survives a short
    * gap so the pointer can travel from the token into the popover itself.
    */
@@ -89,6 +149,22 @@
 
   function setVariable(scope: 'environment' | 'collection', key: string, value: string) {
     post({ type: 'setVariable', scope, key, value });
+  }
+
+  /**
+   * The host's file dialog, as a promise.
+   *
+   * Only the extension host can show one, so the reply comes back as a message;
+   * the token pairs it with the field that asked. Resolves undefined when the
+   * dialog was cancelled or the file was rejected.
+   */
+  const pickWaiters = new Map<string, (path: string | undefined) => void>();
+  let pickCount = 0;
+
+  function pickFile(): Promise<string | undefined> {
+    const token = `pick${++pickCount}`;
+    post({ type: 'pickFile', token });
+    return new Promise((resolve) => pickWaiters.set(token, resolve));
   }
 
   const bodyText = $derived.by(() => {
@@ -132,6 +208,123 @@
   /** Structure first — indented and broken across lines, then highlighted. */
   const prettyBody = $derived(formatBody(bodyText, responseLanguage));
 
+  /** The body as the view on screen shows it: what the search runs against. */
+  const shownBody = $derived(resView === 'raw' ? bodyText : prettyBody);
+  const bodyMatches = $derived(matcher ? matcher.ranges(shownBody).length : 0);
+
+  const shownHeaders = $derived.by(() => {
+    const rows = response?.headers ?? [];
+    const found = matcher;
+    return found ? rows.filter((h) => found.test(h.key, h.value)) : rows;
+  });
+
+  const shownCookies = $derived.by(() => {
+    const rows = response?.cookies ?? [];
+    const found = matcher;
+    return found
+      ? rows.filter((c) => found.test(c.name, c.value, c.domain, c.path, c.sameSite))
+      : rows;
+  });
+
+  const shownAssertions = $derived.by(() => {
+    const found = matcher;
+    return found ? assertions.filter((a) => found.test(a.name, a.error?.message)) : assertions;
+  });
+
+  const shownConsole = $derived.by(() => {
+    const found = matcher;
+    return found ? consoleLines.filter((l) => found.test(l.level, l.message)) : consoleLines;
+  });
+
+  /** What the search found on the tab being looked at, in words. */
+  const searchSummary = $derived.by(() => {
+    if (!matcher || !response) { return ''; }
+    const of = (shown: number, total: number, noun: string) =>
+      `${shown} of ${total} ${noun}${total === 1 ? '' : 's'}`;
+    switch (resTab) {
+      case 'body':
+        return bodyMatches === 0
+          ? 'no matches'
+          : `${bodyMatches}${bodyMatches >= MATCH_LIMIT ? '+' : ''} match${bodyMatches === 1 ? '' : 'es'}`;
+      case 'headers': return of(shownHeaders.length, response.headers.length, 'header');
+      case 'cookies': return of(shownCookies.length, response.cookies.length, 'cookie');
+      case 'tests': return of(shownAssertions.length, assertions.length, 'test');
+      case 'console': return of(shownConsole.length, consoleLines.length, 'line');
+      // The sent tab mixes a filtered table with marked-up text; one number
+      // could only describe half of it, so it goes without.
+      default: return '';
+    }
+  });
+
+  /** Stepping only makes sense where matches are marked rather than filtered. */
+  const canStep = $derived(resTab === 'body' && resView !== 'tree' && bodyMatches > 0);
+
+  function step(delta: number) {
+    if (!bodyMatches) { return; }
+    currentMatch = (currentMatch + delta + bodyMatches) % bodyMatches;
+  }
+
+  function onSearchKey(event: KeyboardEvent) {
+    if (event.key === 'Escape') { query = ''; }
+    else if (event.key === 'Enter') { step(event.shiftKey ? -1 : 1); }
+    else { return; }
+    event.preventDefault();
+  }
+
+  // A fresh query, tab, view or response is a fresh walk through the hits.
+  $effect(() => {
+    void matcher;
+    void resTab;
+    void resView;
+    void bodyMatches;
+    currentMatch = 0;
+  });
+
+  /** Plain text, escaped, with any search hits marked. */
+  const mark = (text: string) => renderTokens(text, matchTokens(text, matcher));
+
+  /** Syntax and `{{variable}}` colouring, with search hits laid over the top. */
+  function marked(text: string, language: string | undefined): string {
+    const base = mergeTokens(languageTokens(text, language), variableTokens(text));
+    return renderTokens(text, matcher ? mergeTokens(base, matchTokens(text, matcher)) : base);
+  }
+
+  const bodyHtml = $derived(
+    resView === 'raw' ? mark(shownBody) : marked(shownBody, responseLanguage)
+  );
+
+  /**
+   * Put the current hit on screen. Runs after every re-render of the body,
+   * because `{@html}` replaces the spans this marks up.
+   */
+  $effect(() => {
+    const host = matchHost;
+    const index = currentMatch;
+    void bodyHtml;
+    if (!host) { return; }
+    const marks = host.querySelectorAll<HTMLElement>('[data-match]');
+    marks.forEach((hit) => hit.classList.remove('current'));
+    const target = marks[index];
+    if (!target) { return; }
+    target.classList.add('current');
+    target.scrollIntoView({ block: 'center', inline: 'nearest' });
+  });
+
+  /** How many settings this request itself carries — the Settings tab's badge. */
+  const settingsCount = $derived(Object.keys(request?.settings.own ?? {}).length);
+
+  /**
+   * Whether the open request tab is one whose content is a single text editor,
+   * and so should be stretched to the bottom of the card rather than left as a
+   * fixed-height box with dead space under it. The tables and the settings list
+   * keep their natural heights.
+   */
+  const reqPaneFills = $derived(
+    reqTab === 'pre' ||
+      reqTab === 'tests' ||
+      (reqTab === 'body' && (request?.body.mode === 'raw' || request?.body.mode === 'graphql'))
+  );
+
   const passed = $derived(assertions.filter((a) => a.passed && !a.skipped).length);
   const failed = $derived(assertions.filter((a) => !a.passed && !a.skipped).length);
 
@@ -156,6 +349,7 @@
     return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   }
 
+  /** Send, or — while the run this button started is still going — stop it. */
   function send() {
     if (running) { return post({ type: 'cancel' }); }
     post({ type: 'send' });
@@ -165,6 +359,20 @@
     if (focusCount > 0) { pending = view; }
     else { request = view; }
   }
+
+  /**
+   * A webview panel has no find widget of its own, so Ctrl/Cmd+F is free — and
+   * a key that visibly does nothing is worse than one that goes somewhere. It
+   * lands in the response search.
+   */
+  window.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key.toLowerCase() !== 'f' || event.altKey) { return; }
+    if (!event.ctrlKey && !event.metaKey) { return; }
+    if (!searchBox) { return; }
+    event.preventDefault();
+    searchBox.focus();
+    searchBox.select();
+  });
 
   window.addEventListener('message', (event: MessageEvent<ToWebview>) => {
     const msg = event.data;
@@ -176,6 +384,7 @@
         scriptsAllowed = msg.scriptsAllowed;
         authTypes = msg.authTypes;
         authFields = msg.authFields;
+        settingDefaults = msg.settingDefaults;
         break;
       case 'environments':
         environments = msg.environments;
@@ -218,6 +427,10 @@
       case 'runFinished':
         running = false;
         break;
+      case 'filePicked':
+        pickWaiters.get(msg.token)?.(msg.path);
+        pickWaiters.delete(msg.token);
+        break;
     }
   });
 
@@ -227,7 +440,7 @@
 {#if !request}
   <div class="empty">Loading request…</div>
 {:else}
-  <div class="layout">
+  <div class="layout request">
     <div class="crumbs">
       <span>{request.collectionName}</span>
       {#each request.path.slice(0, -1) as segment}
@@ -237,42 +450,6 @@
       <button class="icon" title="Open the collection JSON" onclick={() => post({ type: 'revealInFile' })}>
         <span class="codicon codicon-json"></span>
       </button>
-    </div>
-
-    <div class="urlbar">
-      <select
-        class="method"
-        data-method={request.method}
-        value={request.method}
-        onchange={(e) => save({ field: 'method', value: (e.currentTarget as HTMLSelectElement).value })}
-      >
-        {#each METHODS as method}<option value={method}>{method}</option>{/each}
-      </select>
-
-      <HighlightedField
-        fieldClass="url"
-        value={request.url}
-        {resolver}
-        {onvar}
-        placeholder="https://{'{{'}baseUrl{'}}'}/path"
-        {onfocuschange}
-        oncommit={(value) => save({ field: 'url', value })}
-      />
-
-      <select
-        value={activeEnvId}
-        title="Active environment"
-        onchange={(e) =>
-          post({
-            type: 'selectEnvironment',
-            environmentId: (e.currentTarget as HTMLSelectElement).value
-          })}
-      >
-        <option value="">No environment</option>
-        {#each environments as env}<option value={env.id}>{env.name}</option>{/each}
-      </select>
-
-      <button onclick={send}>{running ? 'Cancel' : 'Send'}</button>
     </div>
 
     {#if !scriptsAllowed}
@@ -291,6 +468,50 @@
     <div class="split">
       <!-- request half -->
       <div class="half">
+        <div class="urlbar">
+          <select
+            class="method"
+            data-method={request.method}
+            value={request.method}
+            onchange={(e) => save({ field: 'method', value: (e.currentTarget as HTMLSelectElement).value })}
+          >
+            {#each METHODS as method}<option value={method}>{method}</option>{/each}
+          </select>
+
+          <HighlightedField
+            fieldClass="url"
+            value={request.url}
+            {resolver}
+            {pathClassify}
+            {onvar}
+            placeholder="https://{'{{'}baseUrl{'}}'}/path"
+            {onfocuschange}
+            oncommit={(value) => save({ field: 'url', value })}
+          />
+
+          <select
+            value={activeEnvId}
+            title="Active environment"
+            onchange={(e) =>
+              post({
+                type: 'selectEnvironment',
+                environmentId: (e.currentTarget as HTMLSelectElement).value
+              })}
+          >
+            <option value="">No environment</option>
+            {#each environments as env}<option value={env.id}>{env.name}</option>{/each}
+          </select>
+
+          <button
+            class:stop={running}
+            title={running ? 'Stop this request' : 'Send this request'}
+            onclick={send}
+          >
+            {#if running}<span class="codicon codicon-debug-stop"></span>{/if}
+            {running ? 'Stop' : 'Send'}
+          </button>
+        </div>
+
         <div class="tabs">
           <button class="tab" class:active={reqTab === 'params'} onclick={() => (reqTab = 'params')}>
             Params<span class="count">{request.query.length + request.pathVariables.length}</span>
@@ -310,9 +531,12 @@
           <button class="tab" class:active={reqTab === 'tests'} onclick={() => (reqTab = 'tests')}>
             Tests{#if request.scripts.test}<span class="count">●</span>{/if}
           </button>
+          <button class="tab" class:active={reqTab === 'settings'} onclick={() => (reqTab = 'settings')}>
+            Settings{#if settingsCount}<span class="count">{settingsCount}</span>{/if}
+          </button>
         </div>
 
-        <div class="pane">
+        <div class="pane" class:fill={reqPaneFills}>
           {#if reqTab === 'params'}
             <div class="section-title">Query parameters</div>
             <KeyValueTable
@@ -325,6 +549,11 @@
               onchange={(rows) => save({ field: 'query', rows })}
             />
             <div class="section-title">Path variables</div>
+            <div class="note">
+              Fill <code>:name</code> segments of the URL path, for this request only — unlike
+              <code>{'{{'}name{'}}'}</code> environment variables, which work anywhere and are
+              shared across requests.
+            </div>
             <KeyValueTable
               rows={request.pathVariables}
               editable
@@ -421,6 +650,7 @@
                 rows={request.body.entries ?? []}
                 editable
                 fileToggle={request.body.mode === 'formdata'}
+                pickFile={request.body.mode === 'formdata' ? pickFile : undefined}
                 {resolver}
                 {onfocuschange}
                 {onvar}
@@ -428,19 +658,31 @@
                 onchange={(rows) => save({ field: 'body', mode: request!.body.mode, rows })}
               />
             {:else if request.body.mode === 'file'}
-              <HighlightedField
-                fieldClass="cell wide"
-                value={request.body.text ?? ''}
-                {resolver}
-                {onvar}
-                placeholder="path/to/file relative to the workspace"
-                {onfocuschange}
-                oncommit={(text) => save({ field: 'body', mode: 'file', text })}
-              />
+              <div class="valuecell">
+                <HighlightedField
+                  fieldClass="cell wide"
+                  value={request.body.text ?? ''}
+                  {resolver}
+                  {onvar}
+                  placeholder="path/to/file relative to the workspace"
+                  {onfocuschange}
+                  oncommit={(text) => save({ field: 'body', mode: 'file', text })}
+                />
+                <button
+                  class="icon"
+                  title="Browse for a file"
+                  onclick={async () => {
+                    const picked = await pickFile();
+                    if (picked !== undefined) { save({ field: 'body', mode: 'file', text: picked }); }
+                  }}
+                >
+                  <span class="codicon codicon-folder-opened"></span>
+                </button>
+              </div>
             {:else}
               <HighlightedField
                 multiline
-                fieldClass="code"
+                fieldClass="code grow"
                 value={request.body.text ?? ''}
                 language={bodyLanguage(request.body.language)}
                 {resolver}
@@ -481,7 +723,7 @@
             {#key request.itemId + listen}
               <HighlightedField
                 multiline
-                fieldClass="code tall"
+                fieldClass="code tall grow"
                 language="javascript"
                 placeholder={listen === 'prerequest'
                   ? "pm.environment.set('token', '…');"
@@ -497,6 +739,14 @@
               <div class="section-title">Also runs — from {script.from} (edit it there)</div>
               <pre>{@html highlight(script.source, 'javascript', resolver.classify)}</pre>
             {/each}
+          {:else if reqTab === 'settings'}
+            <SettingsTab
+              settings={request.settings}
+              defaults={settingDefaults}
+              collectionName={request.collectionName}
+              {onfocuschange}
+              onset={(key, value) => save({ field: 'setting', key, value })}
+            />
           {/if}
         </div>
       </div>
@@ -518,24 +768,83 @@
           </div>
 
           <div class="tabs">
-            <button class="tab" class:active={resTab === 'body'} onclick={() => (resTab = 'body')}>Body</button>
+            <button class="tab" class:active={resTab === 'body'} onclick={() => (resTab = 'body')}>
+              Body{#if matcher}<span class="count">{bodyMatches}</span>{/if}
+            </button>
             <button class="tab" class:active={resTab === 'headers'} onclick={() => (resTab = 'headers')}>
-              Headers<span class="count">{response.headers.length}</span>
+              Headers<span class="count">
+                {matcher ? `${shownHeaders.length}/${response.headers.length}` : response.headers.length}
+              </span>
             </button>
             <button class="tab" class:active={resTab === 'cookies'} onclick={() => (resTab = 'cookies')}>
-              Cookies<span class="count">{response.cookies.length}</span>
+              Cookies<span class="count">
+                {matcher ? `${shownCookies.length}/${response.cookies.length}` : response.cookies.length}
+              </span>
             </button>
             <button class="tab" class:active={resTab === 'tests'} onclick={() => (resTab = 'tests')}>
-              Tests<span class="count">{assertions.length}</span>
+              Tests<span class="count">
+                {matcher ? `${shownAssertions.length}/${assertions.length}` : assertions.length}
+              </span>
             </button>
             <button class="tab" class:active={resTab === 'console'} onclick={() => (resTab = 'console')}>
-              Console<span class="count">{consoleLines.length}</span>
+              Console<span class="count">
+                {matcher ? `${shownConsole.length}/${consoleLines.length}` : consoleLines.length}
+              </span>
             </button>
             <button class="tab" class:active={resTab === 'sent'} onclick={() => (resTab = 'sent')}>Sent</button>
             {#if visualizerHtml}
               <button class="tab" class:active={resTab === 'viz'} onclick={() => (resTab = 'viz')}>Visualize</button>
             {/if}
           </div>
+
+          {#if resTab !== 'viz'}
+            <div class="searchbar">
+              <span class="codicon codicon-search"></span>
+              <input
+                bind:this={searchBox}
+                bind:value={query}
+                class="searchbox"
+                type="text"
+                spellcheck="false"
+                aria-label="Search this response"
+                placeholder="Search this response — body, headers, cookies, tests, console"
+                onkeydown={onSearchKey}
+              />
+              {#if query}
+                <button class="icon" title="Clear the search (Esc)" onclick={() => (query = '')}>
+                  <span class="codicon codicon-close"></span>
+                </button>
+              {/if}
+              <button
+                class="toggle"
+                class:active={searchCase}
+                title="Match case"
+                onclick={() => (searchCase = !searchCase)}
+              >Aa</button>
+              <button
+                class="toggle"
+                class:active={searchRegex}
+                title="Use a regular expression"
+                onclick={() => (searchRegex = !searchRegex)}
+              >.*</button>
+
+              {#if search.kind === 'invalid'}
+                <span class="searchnote bad" title={search.message}>{search.message}</span>
+              {:else if searchSummary}
+                <span class="searchnote muted">{searchSummary}</span>
+              {/if}
+
+              {#if canStep}
+                <span class="searchnote muted">{currentMatch + 1} of {bodyMatches}</span>
+                <button class="icon" title="Previous match (Shift+Enter)" onclick={() => step(-1)}>
+                  <span class="codicon codicon-arrow-up"></span>
+                </button>
+                <button class="icon" title="Next match (Enter)" onclick={() => step(1)}>
+                  <span class="codicon codicon-arrow-down"></span>
+                </button>
+              {/if}
+            </div>
+          {/if}
 
           <div class="pane">
             {#if resTab === 'body'}
@@ -553,21 +862,22 @@
               </div>
 
               {#if resView === 'tree'}
-                {#if 'value' in parsedBody}
-                  <div class="tree">
-                    <JsonTree value={parsedBody.value} open />
-                  </div>
-                {:else}
+                {#if !('value' in parsedBody)}
                   <div class="empty">{parsedBody.error}</div>
+                {:else if matcher && !jsonMatches(matcher, parsedBody.value)}
+                  <div class="empty">Nothing in this body matches “{matcher.text}”.</div>
+                {:else}
+                  <div class="tree">
+                    <JsonTree value={parsedBody.value} open {matcher} />
+                  </div>
                 {/if}
-              {:else if resView === 'raw'}
-                <!-- Exactly what came back: no re-indenting, no colouring. -->
-                <pre class:wrap>{bodyText}</pre>
               {:else}
-                <pre class:wrap>{@html highlight(prettyBody, responseLanguage)}</pre>
+                <!-- Pretty is formatted and coloured; raw is exactly what came
+                     back. Either way the only thing added is the search hits. -->
+                <pre bind:this={matchHost} class:wrap>{@html bodyHtml}</pre>
               {/if}
             {:else if resTab === 'headers'}
-              <KeyValueTable rows={response.headers} empty="No response headers." />
+              <KeyValueTable rows={response.headers} {matcher} empty="No response headers." />
             {:else if resTab === 'cookies'}
               <div class="section-title">
                 <span>Cookies for this request's URL</span>
@@ -575,18 +885,18 @@
                   Manage cookies
                 </button>
               </div>
-              {#if response.cookies.length}
+              {#if shownCookies.length}
                 <table>
                   <thead>
                     <tr><th>Name</th><th>Value</th><th>Domain</th><th>Path</th><th>Expires</th><th>Flags</th></tr>
                   </thead>
                   <tbody>
-                    {#each response.cookies as c}
+                    {#each shownCookies as c}
                       <tr>
-                        <td class="k">{c.name}</td>
-                        <td>{c.value}</td>
-                        <td>{c.domain ?? ''}</td>
-                        <td>{c.path ?? ''}</td>
+                        <td class="k">{@html mark(c.name)}</td>
+                        <td>{@html mark(c.value)}</td>
+                        <td>{@html mark(c.domain ?? '')}</td>
+                        <td>{@html mark(c.path ?? '')}</td>
                         <td class="muted">
                           {c.maxAge !== undefined
                             ? `max-age ${c.maxAge}s`
@@ -603,32 +913,38 @@
                     {/each}
                   </tbody>
                 </table>
+              {:else if matcher && response.cookies.length}
+                <div class="empty">No cookie here matches “{matcher.text}”.</div>
               {:else}
                 <div class="empty">No cookies apply to this URL.</div>
               {/if}
             {:else if resTab === 'tests'}
-              {#if assertions.length}
-                {#each assertions as a}
+              {#if shownAssertions.length}
+                {#each shownAssertions as a}
                   <div class="test">
                     <span class={a.skipped ? 'skip' : a.passed ? 'pass' : 'fail'}>
                       {a.skipped ? '○' : a.passed ? '✓' : '✕'}
                     </span>
                     <span class="name">
-                      {a.name}
-                      {#if a.error}<span class="err">{a.error.message}</span>{/if}
+                      {@html mark(a.name)}
+                      {#if a.error}<span class="err">{@html mark(a.error.message)}</span>{/if}
                     </span>
                   </div>
                 {/each}
+              {:else if matcher && assertions.length}
+                <div class="empty">No test here matches “{matcher.text}”.</div>
               {:else}
                 <div class="empty">This request has no tests.</div>
               {/if}
             {:else if resTab === 'console'}
-              {#if consoleLines.length}
-                {#each consoleLines as line}
+              {#if shownConsole.length}
+                {#each shownConsole as line}
                   <div class="console-line {line.level}">
-                    <span class="level">{line.level}</span>{line.message}
+                    <span class="level">{line.level}</span>{@html mark(line.message)}
                   </div>
                 {/each}
+              {:else if matcher && consoleLines.length}
+                <div class="empty">No logged line matches “{matcher.text}”.</div>
               {:else}
                 <div class="empty">Nothing logged. Use <code>console.log</code> in a script.</div>
               {/if}
@@ -636,13 +952,16 @@
               {#if sentRequest}
                 <pre class:wrap>{sentRequest.method} {@html renderTokens(
                   sentRequest.url,
-                  variableTokens(sentRequest.url, resolver.classify)
+                  mergeTokens(
+                    variableTokens(sentRequest.url, resolver.classify),
+                    matchTokens(sentRequest.url, matcher)
+                  )
                 )}</pre>
                 <div class="section-title">Headers as sent</div>
-                <KeyValueTable rows={sentRequest.headers} empty="No headers." />
+                <KeyValueTable rows={sentRequest.headers} {matcher} empty="No headers." />
                 {#if sentRequest.body}
                   <div class="section-title">Body as sent</div>
-                  <pre class:wrap>{@html highlight(sentRequest.body, bodyLanguage(request.body.language))}</pre>
+                  <pre class:wrap>{@html marked(sentRequest.body, bodyLanguage(request.body.language))}</pre>
                 {/if}
               {/if}
             {:else if resTab === 'viz' && visualizerHtml}

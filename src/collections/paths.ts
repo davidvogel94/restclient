@@ -34,14 +34,62 @@ export function parseEntry(entry: string): ParsedEntry {
 }
 
 /**
+ * Is this path inside the workspace folder?
+ *
+ * Asked by two features with the same stake in the answer: import copies a file
+ * in only when it is outside, and the runner refuses to read one that is not.
+ * The folder itself counts as inside, so it can be an import destination.
+ *
+ * `..` is compared as a whole segment — a sibling directory called `..foo` is
+ * not an escape, and treating it as one would push a legitimate path out.
+ */
+export function isInside(fsPath: string, workspaceFsPath: string | undefined): boolean {
+  if (!workspaceFsPath) { return false; }
+  const relative = path.relative(workspaceFsPath, fsPath);
+  if (path.isAbsolute(relative)) { return false; }
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`);
+}
+
+/**
  * How a location should be written back: workspace-relative with forward
  * slashes when it is inside the workspace, absolute when it is not.
+ *
+ * The workspace folder itself serializes absolute: an entry naming a file
+ * cannot be the empty string.
  */
 export function serializeEntry(fsPath: string, workspaceFsPath: string | undefined): string {
-  if (!workspaceFsPath) { return fsPath; }
-  const relative = path.relative(workspaceFsPath, fsPath);
-  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
-    return relative.split(path.sep).join('/');
+  if (!isInside(fsPath, workspaceFsPath)) { return fsPath; }
+  const relative = path.relative(workspaceFsPath!, fsPath);
+  return relative ? relative.split(path.sep).join('/') : fsPath;
+}
+
+/**
+ * The workspace folder a path belongs to, or nothing when it is outside all of
+ * them.
+ *
+ * The longest match wins. A multi-root workspace can legitimately hold a folder
+ * and one of its own subdirectories as two separate roots, and a file in the
+ * subdirectory belongs to the nearer of the two — that is the folder whose
+ * `.vscode/settings.json` the user wrote with that file in mind, so it is the
+ * one its relative entries are relative to.
+ */
+export function rootFor(fsPath: string, roots: readonly string[]): string | undefined {
+  let best: string | undefined;
+  for (const root of roots) {
+    if (!isInside(fsPath, root)) { continue; }
+    if (best === undefined || root.length > best.length) { best = root; }
   }
-  return fsPath;
+  return best;
+}
+
+/**
+ * Is this path inside any of the workspace folders?
+ *
+ * The multi-root form of `isInside`, and the question the runner's file jail
+ * and the import path both actually mean to ask: a workspace is a set of roots,
+ * and a file in the second one is no less in the workspace than a file in the
+ * first.
+ */
+export function isInsideAny(fsPath: string, roots: readonly string[]): boolean {
+  return roots.some((root) => isInside(fsPath, root));
 }

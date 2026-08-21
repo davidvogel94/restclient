@@ -20,6 +20,16 @@ export interface CachedResponse {
   failure?: string;
 }
 
+/**
+ * The cache key for one request: the collection it lives in and its item id.
+ *
+ * Shared so the request editor and the tree agree on what "this request's last
+ * response" means without either owning the other's naming.
+ */
+export function resultKey(collectionUri: string, itemId: string): string {
+  return `${collectionUri}::${itemId}`;
+}
+
 /** Roughly 32 MB of base64 bodies, after which the oldest entries are dropped. */
 const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRIES = 50;

@@ -1,0 +1,6 @@
+{
+  "restclient.autoDiscover": false,
+  "restclient.collections": [
+    "api/listed.postman_collection.json"
+  ]
+}

@@ -1,11 +1,28 @@
 import type { SerializedAssertion, SerializedRequest, SerializedResponse } from '../runner/protocol';
 import type { RequestUpdate } from '../collections/edits';
+import type { SettingValue } from '../collections/settings';
 
 export interface KeyValue {
   key: string;
   value: string;
   disabled?: boolean;
   description?: string;
+}
+
+/**
+ * `protocolProfileBehavior`, split by where each key came from.
+ *
+ * Postman resolves these up the tree key by key, so a request can be silent on
+ * a setting and still be governed by one — which the editor has to show without
+ * pretending the request set it.
+ */
+export interface SettingsView {
+  /** Set on this item itself. */
+  own: Record<string, SettingValue>;
+  /** In force from a folder or the collection, this item being silent. */
+  inherited: Record<string, SettingValue>;
+  /** Which container each inherited key came from. */
+  inheritedFrom: Record<string, string>;
 }
 
 /** Everything the request editor needs to render one item, already flattened. */
@@ -24,6 +41,7 @@ export interface RequestView {
   scripts: { prerequest?: string; test?: string };
   /** Scripts defined on parent folders/collection that also run for this item. */
   inheritedScripts: Array<{ from: string; listen: string; source: string }>;
+  settings: SettingsView;
 }
 
 export interface EnvironmentSummary {
@@ -59,6 +77,13 @@ export type ToWebview =
       scriptsAllowed: boolean;
       authTypes: readonly string[];
       authFields: Record<string, string[]>;
+      /**
+       * What each request setting falls back to when nothing in the collection
+       * sets it — a `restclient.*` setting for some, the engine's own default
+       * for the rest. The editor shows this as the value in force so an
+       * untouched toggle is never blank or misleadingly off.
+       */
+      settingDefaults: Record<string, SettingValue>;
     }
   | { type: 'saved' }
   | { type: 'saveFailed'; message: string }
@@ -70,7 +95,9 @@ export type ToWebview =
   | { type: 'console'; lines: ConsoleLine[] }
   | { type: 'visualizer'; html: string }
   | { type: 'runFailed'; message: string }
-  | { type: 'runFinished' };
+  | { type: 'runFinished' }
+  /** Answer to `pickFile`; `path` is absent when the dialog was cancelled. */
+  | { type: 'filePicked'; token: string; path?: string };
 
 /** Webview -> extension host. */
 export type FromWebview =
@@ -82,6 +109,8 @@ export type FromWebview =
   | { type: 'update'; update: RequestUpdate }
   | { type: 'setVariable'; scope: 'environment' | 'collection'; key: string; value: string }
   | { type: 'moveSecretToKeychain'; key: string }
+  /** Open the host's file dialog for a file body or form-data file field. */
+  | { type: 'pickFile'; token: string }
   | { type: 'editEnvironment' }
   | { type: 'manageCookies' }
   | { type: 'revealInFile' };

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { REQUEST_SETTINGS, coerceSetting, type SettingValue } from '../collections/settings';
 import type { CertificateConfig, ProxyConfig } from './protocol';
 
 /**
@@ -67,4 +68,34 @@ export function readStrictSSL(): boolean {
     inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
   if (typeof explicit === 'boolean') { return explicit; }
   return false;
+}
+
+/**
+ * What each per-request setting falls back to when no request, folder or
+ * collection sets it.
+ *
+ * Four of them have a workspace-wide equivalent under `restclient.*`, which is
+ * what the runner passes as the requester's default and therefore what the
+ * engine resolves to; the rest fall through to postman-runtime's own built-in.
+ * The editor needs this to show the value actually in force rather than a blank
+ * toggle, so it is computed here — the one place that already reads config.
+ */
+export function readSettingDefaults(): Record<string, SettingValue> {
+  const config = vscode.workspace.getConfiguration('restclient');
+  const out: Record<string, SettingValue> = {};
+
+  for (const spec of REQUEST_SETTINGS) {
+    if (spec.fallback === 'strictSSL') {
+      out[spec.key] = readStrictSSL();
+      continue;
+    }
+    if (spec.fallback) {
+      // A nonsense setting value must not be presented as the effective one.
+      out[spec.key] = coerceSetting(spec.key, config.get(spec.fallback)) ?? spec.builtin;
+      continue;
+    }
+    out[spec.key] = spec.builtin;
+  }
+
+  return out;
 }

@@ -103,3 +103,58 @@ export function slugify(name: string): string {
     .toLowerCase();
   return slug || 'untitled';
 }
+
+/** The conventional suffix for each kind of Postman export. */
+export const FILE_SUFFIX = {
+  collection: '.postman_collection.json',
+  environment: '.postman_environment.json'
+} as const;
+
+/**
+ * A file name split at its Postman suffix, so the suffix can be put back.
+ *
+ * `orders.postman_collection.json` is `orders` plus
+ * `.postman_collection.json` — one name, not a stem and an extension, which is
+ * why `path.extname` is no use here. A file with no Postman suffix falls back
+ * to its plain extension, and one with neither is all base.
+ */
+export function splitFileName(fileName: string): { base: string; suffix: string } {
+  const name = String(fileName ?? '');
+  const postman = /\.postman_(collection|environment|globals)\.json$/i.exec(name);
+  if (postman) { return { base: name.slice(0, postman.index), suffix: postman[0] }; }
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? { base: name.slice(0, dot), suffix: name.slice(dot) } : { base: name, suffix: '' };
+}
+
+/**
+ * A file name nothing has taken yet, keeping the original recognisable.
+ *
+ * An import keeps the name the file arrived with, because that is the name the
+ * user recognises — so a clash is settled by counting, not by renaming to
+ * something derived. The counter goes *before* the `.postman_*.json` part, as
+ * in `exportFileNames`: a copy still has to look like a Postman export rather
+ * than like `orders.postman_collection-2.json`.
+ */
+export function uniqueFileName(fileName: string, taken: (name: string) => boolean): string {
+  if (!taken(fileName)) { return fileName; }
+  const { base, suffix } = splitFileName(fileName);
+  for (let n = 2; ; n++) {
+    const candidate = `${base}-${n}${suffix}`;
+    if (!taken(candidate)) { return candidate; }
+  }
+}
+
+/**
+ * A display name suggested by a file name — the rough inverse of `slugify`.
+ *
+ * Used to prefill the name prompt after the user has picked where a new file
+ * goes, so naming the file is usually the only naming anyone has to do.
+ */
+export function nameFromFileName(fileName: string): string {
+  const base = splitFileName(String(fileName ?? '')).base;
+  const words = base
+    .split(/[-_.\s]+/)
+    .filter(Boolean)
+    .map((w) => (/[A-Z]/.test(w.slice(1)) ? w : w.charAt(0).toUpperCase() + w.slice(1)));
+  return words.join(' ');
+}

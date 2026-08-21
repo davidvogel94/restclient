@@ -48,8 +48,10 @@ export interface RunOptions {
   stopOnError?: boolean;
   stopOnFailure?: boolean;
   timeout?: { global?: number; request?: number; script?: number };
-  /** Absolute path requests may read files from; nothing outside is readable. */
+  /** The folder relative file paths in this collection resolve against. */
   workspaceRoot?: string;
+  /** Every workspace folder; a request may read from any of them, nothing else. */
+  workspaceRoots?: string[];
   /** When false, pre-request/test scripts are stripped before running. */
   allowScripts: boolean;
   /** Resolved `secret`-typed variables, injected as environment values. */
@@ -60,6 +62,15 @@ export interface RunOptions {
   disableCookies?: boolean;
   /** 'http1' | 'http2' | 'auto' */
   protocolVersion?: string;
+  /**
+   * Use postman-runtime's WHATWG URL parser instead of the legacy one.
+   *
+   * Only that parser honours the `disableUrlEncoding` request setting, and it
+   * differs from the legacy parser on enough edge cases that it is switched on
+   * per run — when the collection actually uses the setting — rather than for
+   * everything.
+   */
+  useWhatWGUrlParser?: boolean;
   /** Bytes of response body to ship back to the UI. */
   maxResponseBytes?: number;
   /** Cookie jar carried over from previous runs. */

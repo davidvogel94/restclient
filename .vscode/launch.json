@@ -1,0 +1,95 @@
+{
+  // Debug configurations for this extension. `Run Extension` is the usual one:
+  // it starts the esbuild watcher, then opens a second VS Code window with the
+  // extension loaded from dist/.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
+      // The Postman run happens in a forked dist/runner.js; without this,
+      // breakpoints in src/runner/** never bind.
+      "autoAttachChildProcesses": true,
+      "preLaunchTask": "npm: watch"
+    },
+    {
+      "name": "Run Extension (fixture workspace)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/fixtures/workspace"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
+      "autoAttachChildProcesses": true,
+      "preLaunchTask": "npm: watch"
+    },
+    {
+      "name": "Integration Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      // Reads .vscode-test.mjs, so the file list, fixture workspace and mocha
+      // options stay in one place and match `npm run test:integration`.
+      "testConfiguration": "${workspaceFolder}/.vscode-test.mjs",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js",
+        "${workspaceFolder}/out/**/*.js"
+      ],
+      "autoAttachChildProcesses": true,
+      "preLaunchTask": "build: extension + tests"
+    },
+    {
+      "name": "Unit Tests",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/test/unit",
+      "runtimeArgs": [
+        "--test"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js",
+        "${workspaceFolder}/out/**/*.js"
+      ],
+      "preLaunchTask": "build: extension + tests"
+    },
+    {
+      "name": "Unit Tests (current file)",
+      "type": "node",
+      "request": "launch",
+      // Maps test/unit/foo.test.ts -> out/test/unit/foo.test.js.
+      "program": "${workspaceFolder}/out/${relativeFileDirname}/${fileBasenameNoExtension}.js",
+      "runtimeArgs": [
+        "--test"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js",
+        "${workspaceFolder}/out/**/*.js"
+      ],
+      "preLaunchTask": "build: extension + tests"
+    },
+    {
+      "name": "Spike Script",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/spike.cjs",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
+}

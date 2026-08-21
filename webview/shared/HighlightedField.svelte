@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { languageTokens, mergeTokens, renderTokens, variableTokens } from '../../src/shared/highlight';
+  import {
+    languageTokens,
+    mergeTokens,
+    pathVariableTokens,
+    renderTokens,
+    variableTokens
+  } from '../../src/shared/highlight';
+  import type { TokenClass } from '../../src/shared/highlight';
   import type { Resolver, VarHover } from './vars';
 
   /**
@@ -19,6 +26,7 @@
     multiline = false,
     language = undefined,
     resolver = undefined,
+    pathClassify = undefined,
     placeholder = '',
     spellcheck = false,
     fieldClass = '',
@@ -32,6 +40,8 @@
     multiline?: boolean;
     language?: string | undefined;
     resolver?: Resolver | undefined;
+    /** Set only where `:name` path variables mean something: the URL bar. */
+    pathClassify?: ((name: string) => TokenClass) | undefined;
     placeholder?: string;
     spellcheck?: boolean;
     fieldClass?: string;
@@ -59,10 +69,16 @@
     }
   });
 
+  // `{{variables}}` go on last so they win over a path variable they sit inside.
   const html = $derived(
     renderTokens(
       text,
-      mergeTokens(languageTokens(text, language), variableTokens(text, resolver?.classify))
+      mergeTokens(
+        pathClassify
+          ? mergeTokens(languageTokens(text, language), pathVariableTokens(text, pathClassify))
+          : languageTokens(text, language),
+        variableTokens(text, resolver?.classify)
+      )
     )
   );
 

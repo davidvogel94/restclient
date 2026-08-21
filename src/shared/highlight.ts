@@ -35,7 +35,11 @@ export type TokenClass =
   | 'var-ok'
   | 'var-missing'
   | 'var-secret'
-  | 'var-dynamic';
+  | 'var-dynamic'
+  | 'path-ok'
+  | 'path-missing'
+  /** A search hit. Overlaid on top of everything else, so it always shows. */
+  | 'match';
 
 export interface Token {
   start: number;
@@ -43,6 +47,8 @@ export interface Token {
   cls: TokenClass;
   /** Set on variable tokens: the name between the braces. */
   name?: string;
+  /** Set on match tokens: its ordinal in the text, for stepping through hits. */
+  index?: number;
 }
 
 /**
@@ -52,6 +58,15 @@ export interface Token {
  * colour is what the runner will substitute.
  */
 export const VARIABLE_PATTERN = '\\{\\{([^{}]*?)\\}\\}';
+
+/**
+ * Postman's rule for a path variable, from
+ * postman-collection/lib/collection/url.js:41: a path *segment* starting with
+ * `:`, its name running to the first `.` — so `/:id.json` binds `id` and keeps
+ * the extension. Requiring the leading `/` is what keeps the colons of
+ * `https://` and `localhost:3000` out of it.
+ */
+export const PATH_VARIABLE_PATTERN = '/:([^/.?#]+)';
 
 /** Above this, tokenising costs more than the colour is worth. */
 const LANGUAGE_LIMIT = 100_000;
@@ -116,7 +131,15 @@ function coalesce(tokens: Token[]): Token[] {
   for (const token of tokens) {
     if (token.start >= token.end) { continue; }
     const last = out[out.length - 1];
-    if (last && last.end === token.start && last.cls === token.cls && last.name === token.name) {
+    // Adjacent matches must stay separate, or two hits would count as one.
+    if (
+      last &&
+      last.end === token.start &&
+      last.cls === token.cls &&
+      last.name === token.name &&
+      last.index === undefined &&
+      token.index === undefined
+    ) {
       last.end = token.end;
     } else {
       out.push({ ...token });
@@ -139,6 +162,33 @@ export function variableTokens(
   while ((match = re.exec(text)) !== null) {
     const name = match[1];
     out.push({ start: match.index, end: match.index + match[0].length, cls: classify(name), name });
+  }
+  return out;
+}
+
+/**
+ * Map every `:name` path variable in `text` to a token, asking `classify`
+ * whether it has a value to substitute.
+ *
+ * Only the path is scanned: past `?` or `#` a colon is an ordinary character,
+ * and postman-collection only ever expands `:name` in path segments.
+ *
+ * Tokens are deliberately left unnamed — the hover popover is for `{{name}}`
+ * variables, which live in the environment; a path variable is edited in the
+ * Params tab instead.
+ */
+export function pathVariableTokens(
+  text: string,
+  classify: (name: string) => TokenClass = () => 'path-ok'
+): Token[] {
+  const tail = text.search(/[?#]/);
+  const path = tail === -1 ? text : text.slice(0, tail);
+  const re = new RegExp(PATH_VARIABLE_PATTERN, 'g');
+  const out: Token[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(path)) !== null) {
+    // The `/` anchors the match but is not part of the variable.
+    out.push({ start: match.index + 1, end: match.index + match[0].length, cls: classify(match[1]) });
   }
   return out;
 }
@@ -228,8 +278,9 @@ export function renderTokens(text: string, tokens: Token[]): string {
   for (const token of tokens) {
     if (token.start < cursor) { continue; }
     if (token.start > cursor) { html += escapeHtml(text.slice(cursor, token.start)); }
-    const attr = token.name === undefined ? '' : ` data-var="${escapeHtml(token.name).replace(/"/g, '&quot;')}"`;
-    html += `<span class="tok-${token.cls}"${attr}>${escapeHtml(text.slice(token.start, token.end))}</span>`;
+    const named = token.name === undefined ? '' : ` data-var="${escapeHtml(token.name).replace(/"/g, '&quot;')}"`;
+    const indexed = token.index === undefined ? '' : ` data-match="${token.index}"`;
+    html += `<span class="tok-${token.cls}"${named}${indexed}>${escapeHtml(text.slice(token.start, token.end))}</span>`;
     cursor = token.end;
   }
   html += escapeHtml(text.slice(cursor));

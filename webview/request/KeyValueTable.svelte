@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { KeyValue } from '../../src/panels/protocol';
-  import { renderTokens, variableTokens } from '../../src/shared/highlight';
+  import { mergeTokens, renderTokens, variableTokens } from '../../src/shared/highlight';
+  import { matchTokens, type Matcher } from '../../src/shared/search';
   import HighlightedField from '../shared/HighlightedField.svelte';
   import type { Resolver, VarHover } from '../shared/vars';
 
@@ -10,8 +11,12 @@
     editable = false,
     /** Adds a text/file toggle per row, for form-data bodies. */
     fileToggle = false,
+    /** Opens the host's file dialog, for rows marked as files. */
+    pickFile = undefined,
     /** Supplied so `{{variables}}` in keys and values colour by resolution. */
     resolver = undefined,
+    /** A search: read-only rows are narrowed to matches, and the hits marked. */
+    matcher = undefined,
     onchange = (_rows: KeyValue[]) => {},
     onfocuschange = (_focused: boolean) => {},
     onvar = (_hit: VarHover | undefined) => {}
@@ -20,18 +25,28 @@
     empty?: string;
     editable?: boolean;
     fileToggle?: boolean;
+    pickFile?: (() => Promise<string | undefined>) | undefined;
     resolver?: Resolver | undefined;
+    matcher?: Matcher | undefined;
     onchange?: (rows: KeyValue[]) => void;
     onfocuschange?: (focused: boolean) => void;
     onvar?: (hit: VarHover | undefined) => void;
   } = $props();
 
   /** Read-only cells still show variables, they just cannot be typed in. */
-  const shown = (text: string) => renderTokens(text, variableTokens(text, resolver?.classify));
+  const shown = (text: string) =>
+    renderTokens(
+      text,
+      mergeTokens(variableTokens(text, resolver?.classify), matchTokens(text, matcher))
+    );
 
   // Local working copy plus one trailing blank row to type into.
   let draft = $state<KeyValue[]>([]);
-  let lastSerialized = $state('');
+  // Which upstream value the draft was taken from. Deliberately not reactive:
+  // `commit` writes it, and if the effect below read it as state that write
+  // would re-run the effect against the not-yet-updated `rows` prop and reset
+  // the draft — undoing the edit that was just committed.
+  let lastSerialized = '';
 
   $effect(() => {
     const incoming = JSON.stringify(rows);
@@ -43,7 +58,16 @@
     }
   });
 
-  const display = $derived(editable ? [...draft, { key: '', value: '' } as KeyValue] : draft);
+  /**
+   * An editable table is never filtered: hiding a row someone is about to edit
+   * — or the blank one they type new rows into — would be a trap. Search only
+   * narrows the read-only tables, which is where a response lands.
+   */
+  const display = $derived.by(() => {
+    if (editable) { return [...draft, { key: '', value: '' } as KeyValue]; }
+    const search = matcher;
+    return search ? draft.filter((r) => search.test(r.key, r.value, r.description)) : draft;
+  });
 
   function commit() {
     const cleaned = draft.filter((r) => r.key.trim() || r.value.trim());
@@ -58,6 +82,14 @@
       return;
     }
     draft = draft.map((r, i) => (i === index ? { ...r, ...patch } : r));
+  }
+
+  /** Fill a file row's value from the host's file dialog. */
+  async function browse(index: number) {
+    const picked = await pickFile?.();
+    if (picked === undefined) { return; }
+    edit(index, { value: picked });
+    commit();
   }
 
   function remove(index: number) {
@@ -114,14 +146,22 @@
 
           <td>
             {#if editable}
-              <HighlightedField
-                fieldClass="cell"
-                value={row.value}
-                {resolver}
-                {onvar}
-                oninput={(v) => edit(i, { value: v })}
-                onfocuschange={(focused) => { onfocuschange(focused); if (!focused) { commit(); } }}
-              />
+              <div class="valuecell">
+                <HighlightedField
+                  fieldClass="cell"
+                  value={row.value}
+                  {resolver}
+                  {onvar}
+                  placeholder={fileToggle && row.description === 'file' ? 'path relative to the workspace' : ''}
+                  oninput={(v) => edit(i, { value: v })}
+                  onfocuschange={(focused) => { onfocuschange(focused); if (!focused) { commit(); } }}
+                />
+                {#if pickFile && fileToggle && row.description === 'file' && i < draft.length}
+                  <button class="icon" title="Browse for a file" onclick={() => browse(i)}>
+                    <span class="codicon codicon-folder-opened"></span>
+                  </button>
+                {/if}
+              </div>
             {:else}
               {@html shown(row.value)}
               {#if row.description}<div class="muted">{row.description}</div>{/if}
@@ -158,5 +198,7 @@
     </tbody>
   </table>
 {:else}
-  <div class="empty">{empty}</div>
+  <div class="empty">
+    {matcher && rows.length ? `Nothing here matches “${matcher.text}”.` : empty}
+  </div>
 {/if}

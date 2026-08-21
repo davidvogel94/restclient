@@ -1,6 +1,102 @@
 :root {
   --rc-gap: 8px;
-  --rc-border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+
+  /*
+   * Every line and surface in here is mixed from the theme's own foreground at
+   * a stated alpha, rather than taken from a named theme colour.
+   *
+   * The named colours are the obvious choice and they do not work: a number of
+   * themes set `panel.border` to within a shade or two of their editor
+   * background, and a good number set `editorWidget.background` to exactly
+   * their editor background — so a card painted and outlined with them is a
+   * card you cannot see, which is how this page came to look like text on bare
+   * ground. A wash of the foreground has neither problem: it is guaranteed to
+   * contrast with what it is laid over, because contrasting with the background
+   * is the one thing a foreground colour is for.
+   *
+   * `transparent` as the other half of each mix is what makes that work — the
+   * result is the foreground at low alpha, so it composites over whatever is
+   * actually behind it without this file having to name that colour. Stacking
+   * two of them, a header band inside a card, is a second step up for free.
+   *
+   * The alphas below are the dark case. They are re-stated for light themes
+   * further down, because the two are not symmetric: a dark theme's foreground
+   * is near-white against a near-black ground and reaches a readable line in a
+   * few per cent, while a light theme's is a mid grey on white and needs
+   * roughly half again as much to draw the same line. One value for both left
+   * light themes visibly fainter than dark ones.
+   */
+  --rc-wash-1: color-mix(in srgb, var(--vscode-foreground, #808080) 6%, transparent);
+  --rc-wash-2: color-mix(in srgb, var(--vscode-foreground, #808080) 11%, transparent);
+
+  /*
+   * A rule between rows inside a pane: present, but not competing with the text
+   * it separates. `contrastBorder` first throughout — only the high-contrast
+   * themes set it, and a user on one of those has asked for every edge in the
+   * UI to be drawn outright rather than suggested.
+   */
+  --rc-border: var(--vscode-contrastBorder, color-mix(in srgb, var(--vscode-foreground, #808080) 18%, transparent));
+
+  /*
+   * The edge of a card, as opposed to a rule between rows inside one.
+   *
+   * Roughly twice the rules it contains, so "this is where the request ends and
+   * the response begins" reads before any of the hairlines inside either.
+   */
+  --rc-card-border: var(--vscode-contrastBorder, color-mix(in srgb, var(--vscode-foreground, #808080) 44%, transparent));
+  --rc-card-shadow: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.24));
+
+  /*
+   * An editable field's own edge, at rest.
+   *
+   * Fields in here used to be borderless until hovered, which on a page that is
+   * mostly key/value tables left nothing to tell what can be typed in from what
+   * is merely printed beside it — you found the inputs by sweeping the pointer
+   * across the page. So a field carries its edge from the start: a shade under
+   * twice the row rules, which is enough that a cell reads as a box and little
+   * enough that a table of them is not a grid of cages. Under the pointer it
+   * steps up sharply, and focus still puts the theme's own ring on it.
+   *
+   * `input.border` first: a theme that states one has said how its inputs are
+   * outlined, and unlike the panel border it is not a colour themes set to
+   * near-invisible — it is either absent or meant.
+   */
+  --rc-field-border: var(--vscode-input-border, var(--vscode-contrastBorder, color-mix(in srgb, var(--vscode-foreground, #808080) 34%, transparent)));
+  --rc-field-border-hover: color-mix(in srgb, var(--vscode-foreground, #808080) 55%, transparent);
+
+  /*
+   * How much of the editor pane the content spans. Not a reading measure: the
+   * request and the response are tables of key/value pairs and monospaced
+   * bodies, and the reader sizes those columns themselves. A prose cap here
+   * left most of a wide pane as bare background either side and made the body
+   * and script editors narrower than the JSON they hold, so the shell takes
+   * nearly all the width it is given and the cards' 12px inset is the margin.
+   */
+  --rc-shell: 99%;
+}
+
+/*
+ * The same ladder, opened up for a light ground.
+ *
+ * VS Code stamps the theme's kind on the webview — as a class on the body, and
+ * on newer versions as an attribute on the root as well, so both are matched.
+ * It is the only way in here to tell which way round the polarity is:
+ * `prefers-color-scheme` follows the OS rather than the editor's theme, and
+ * gets it backwards for anyone running a light theme on a dark desktop.
+ *
+ * High-contrast light counts as light. Its `contrastBorder` wins for every
+ * border regardless; this only opens up the surfaces underneath them.
+ */
+body.vscode-light,
+body.vscode-high-contrast-light,
+:root[data-vscode-theme-kind='vscode-light'],
+:root[data-vscode-theme-kind='vscode-high-contrast-light'] {
+  --rc-wash-1: color-mix(in srgb, var(--vscode-foreground, #808080) 7%, transparent);
+  --rc-wash-2: color-mix(in srgb, var(--vscode-foreground, #808080) 13%, transparent);
+  --rc-border: var(--vscode-contrastBorder, color-mix(in srgb, var(--vscode-foreground, #808080) 26%, transparent));
+  --rc-card-border: var(--vscode-contrastBorder, color-mix(in srgb, var(--vscode-foreground, #808080) 62%, transparent));
+  --rc-field-border: var(--vscode-input-border, var(--vscode-contrastBorder, color-mix(in srgb, var(--vscode-foreground, #808080) 50%, transparent)));
+  --rc-field-border-hover: color-mix(in srgb, var(--vscode-foreground, #808080) 72%, transparent);
 }
 
 * { box-sizing: border-box; }
@@ -21,6 +117,21 @@ body {
   flex-direction: column;
   height: 100vh;
   min-height: 0;
+}
+
+/* Everything the request editor stacks vertically is capped at the same width
+   so the breadcrumbs, URL bar and panes keep a common left and right edge.
+   Scoped to .request because the other webviews share this stylesheet and lay
+   their content out full width. */
+.layout.request > .crumbs,
+.layout.request > .urlbar,
+.layout.request > .banner,
+.layout.request > .split {
+  width: 100%;
+  max-width: var(--rc-shell);
+  /* Centred, so what little the cap holds back is split evenly between the two
+     edges rather than hanging off one side. */
+  margin-inline: auto;
 }
 
 /* --- header ------------------------------------------------------------ */
@@ -48,7 +159,7 @@ body {
   font-weight: 700;
   padding: 4px 10px;
   border-radius: 3px;
-  border: 1px solid var(--rc-border);
+  border: 1px solid var(--rc-field-border);
   white-space: nowrap;
 }
 
@@ -62,9 +173,9 @@ body {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid var(--rc-border);
+  border: 1px solid var(--rc-field-border);
   border-radius: 3px;
-  background: var(--vscode-input-background);
+  background: var(--vscode-input-background, var(--rc-wash-2));
   color: var(--vscode-input-foreground);
   font-family: var(--vscode-editor-font-family);
   font-size: 0.95em;
@@ -91,10 +202,50 @@ button.secondary {
   color: var(--vscode-button-secondaryForeground);
 }
 
+/*
+ * Stop: the same button, in red, while a run is in flight.
+ *
+ * Send and Run All are the only buttons here that change what they do rather
+ * than just being pressed again, so the colour is the point — it says at a
+ * glance that the run is still going, and that this press ends it rather than
+ * starting another. The status bar's error pair is used because it is the one
+ * background/foreground red every theme defines for exactly this job; the
+ * literals behind it are only for a theme that leaves it out.
+ */
+button.stop {
+  background: var(--vscode-statusBarItem-errorBackground, #c72e0f);
+  color: var(--vscode-statusBarItem-errorForeground, #ffffff);
+}
+
+button.stop:hover:not(:disabled) {
+  background: var(--vscode-statusBarItem-errorHoverBackground, #e03b1c);
+}
+
+/* An icon-only Stop — a row's Run button, mid-run — is red on its own. */
+button.icon.stop {
+  background: none;
+  color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground, #f14c4c));
+  opacity: 1;
+}
+
+button.icon.stop:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground, #f14c4c));
+}
+
+/* The label and its icon on one baseline, so "Stop" is not taller than "Send". */
+button.stop .codicon {
+  vertical-align: text-bottom;
+  margin-right: 4px;
+}
+
+/* Nothing to sit beside on an icon-only button. */
+button.icon.stop .codicon { margin-right: 0; }
+
 select {
   background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-dropdown-border, var(--rc-border));
+  border: 1px solid var(--vscode-dropdown-border, var(--rc-field-border));
   border-radius: 3px;
   padding: 4px 6px;
   max-width: 200px;
@@ -136,17 +287,28 @@ select {
 .pane {
   flex: 1 1 0;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 10px 12px;
 }
 
 /* --- split ------------------------------------------------------------- */
 
+/*
+ * The request and the response are two separate objects on the editor's ground,
+ * not one surface with a hairline through it. Both sides are full of tables and
+ * monospaced text, and a single 1px divider between two identical backgrounds
+ * does not survive that: you lose track of where one ends. So each half is a
+ * bordered card on its own background, inset from the window with a gap between
+ * the two — the same reading whether they are stacked or side by side.
+ */
 .split {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
+  gap: var(--rc-gap);
+  padding: var(--rc-gap) 12px var(--rc-gap);
 }
 
 .half {
@@ -154,9 +316,85 @@ select {
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
+  /* Keeps an unwrappable response body from pushing this half wider than its
+     share once the two sit side by side. */
+  min-width: 0;
+  border: 1px solid var(--rc-card-border);
+  border-radius: 6px;
+  /* One step up off the editor's ground, so the card is a surface in its own
+     right and not just an outline drawn on the page. */
+  background: var(--rc-wash-1);
+  /* A card sits on the ground rather than being cut out of it; the shadow is
+     what says which of the two is in front. */
+  box-shadow: 0 1px 4px var(--rc-card-shadow);
+  /* Clips the header band to the card's rounded corners. */
+  overflow: hidden;
 }
 
-.half + .half { border-top: 1px solid var(--rc-border); }
+/*
+ * The chrome at the top of a card — the response's status strip, and either
+ * side's tab strip — is a shade off the card's own background, so the card
+ * reads as a panel with a header rather than as a floating strip of buttons.
+ * Scoped to `.half` because the collection and console webviews share this
+ * stylesheet and draw their tabs directly on the page.
+ */
+.half > .urlbar,
+.half > .status,
+.half > .tabs {
+  /* A second wash over the card's own, so the band is a step up from the pane
+     below it without either of them having to name a colour. */
+  background: var(--rc-wash-1);
+}
+
+/*
+ * The URL and Send live inside the request card, above its tabs.
+ *
+ * They address one half of the editor — this is the request you are composing,
+ * and this is the button that sends it — so on a wide window they span the
+ * request column and stop at its edge, rather than running on across the
+ * response beside it as a page-wide bar would.
+ */
+.half > .urlbar {
+  border-bottom: 1px solid var(--rc-card-border);
+  /* 12px, so the method select starts on the same left edge as the tabs
+     beneath it and the table below those. */
+  padding: 8px 12px;
+}
+
+/* Wide enough that two columns still leave each half a workable ~600px: put
+   the response beside the request rather than under it. */
+@media (min-width: 1200px) {
+  .request .split { flex-direction: row; }
+
+  /*
+   * Side by side, a card is as tall as the window, so a body or script editor
+   * left at its own height is a small box adrift at the top of a very tall
+   * pane. On the tabs whose content *is* one editor, the pane becomes a flex
+   * column and that editor takes the slack — which is also what makes the drag
+   * handle redundant, so it goes.
+   *
+   * Only in this layout: stacked, a half is half a window tall, the editor's
+   * own height is already most of it, and a box the reader can drag taller is
+   * the better shape.
+   */
+  .request .pane.fill {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Everything around the editor — the mode selects, the headings, a listing of
+     inherited scripts — keeps the height it asks for. */
+  .request .pane.fill > * { flex: 0 0 auto; }
+
+  /* Grows into the slack, never shrinks: when something else shares the tab —
+     a listing of the scripts inherited from the collection — the editor keeps
+     its own height and the pane scrolls, rather than the field you are typing
+     in collapsing so a read-only listing can be shown whole. */
+  .request .pane.fill > .hl-wrap.grow {
+    flex: 1 0 auto;
+    resize: none;
+  }
+}
 
 /* --- tables ------------------------------------------------------------ */
 
@@ -178,6 +416,9 @@ th {
   color: var(--vscode-descriptionForeground);
   font-weight: 600;
   white-space: nowrap;
+  /* The header row is a step up from the rows it labels, so a table reads as
+     one object on the pane rather than as loose text with rules through it. */
+  background: var(--rc-wash-1);
 }
 
 td.k { width: 30%; font-family: var(--vscode-editor-font-family); }
@@ -219,6 +460,16 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; }
   color: var(--vscode-descriptionForeground);
   padding: 24px 12px;
   text-align: center;
+}
+
+/* A whole card with nothing in it yet — the response before anything has been
+   sent. The card is as tall as the window, so its one line of text is centred
+   in it rather than hanging off the top edge. */
+.half > .empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .banner {
@@ -277,28 +528,60 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; }
 
 .section-title:first-child { margin-top: 0; }
 
+/* Explanatory prose under a section title — never competes with the table. */
+.note {
+  margin: 0 0 6px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+}
+
+.note code {
+  font-family: var(--vscode-editor-font-family);
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
 label.inline { display: inline-flex; gap: 6px; align-items: center; }
 
 /* --- editable controls -------------------------------------------------- */
 
+/*
+ * Every field, at rest: its own well and its own edge.
+ *
+ * Not borderless-until-hovered. A table row of key, value and description is
+ * three editable cells beside a column of printed text, and with no edges on
+ * any of them the only way to find out which was which was to sweep the
+ * pointer along the row. The border is what says "type here"; it is quiet
+ * enough at rest to leave the text the loudest thing in the cell.
+ */
 input.cell,
 textarea.code,
 .hl-wrap.cell,
 .hl-wrap.code {
   width: 100%;
-  background: transparent;
+  /* The theme's own input colour where it has one, and where it does not — the
+     light themes, whose inputs are the same white as the editor — the border
+     alone, rather than a block of grey the theme never asked for. Written out
+     here rather than behind a token of its own: a custom property resolves its
+     fallback against the element it was *declared* on, so a token defined up on
+     `:root` would quietly settle on `transparent` in any host that hands the
+     theme's variables to some other element. */
+  background: var(--vscode-input-background, transparent);
   color: var(--vscode-input-foreground);
-  border: 1px solid transparent;
+  border: 1px solid var(--rc-field-border);
   border-radius: 2px;
   padding: 2px 4px;
   font-family: var(--vscode-editor-font-family);
   font-size: 0.95em;
 }
 
+/* Under the pointer the edge steps up, so the field you are about to click is
+   picked out from the ones either side of it. */
 input.cell:hover,
 textarea.code:hover,
 .hl-wrap.cell:hover,
-.hl-wrap.code:hover { border-color: var(--rc-border); }
+.hl-wrap.code:hover { border-color: var(--rc-field-border-hover); }
 
 input.cell:focus,
 textarea.code:focus,
@@ -313,10 +596,20 @@ select:focus,
 input.cell.wide,
 .hl-wrap.cell.wide { max-width: 480px; }
 
+/* A field with a trailing affordance — the browse button on file paths. */
+.valuecell {
+  display: flex;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.valuecell > .hl-wrap { flex: 1 1 auto; min-width: 0; }
+
+/* A body or script editor is a field the size of a pane, so it keeps a well
+   even where a theme has no input colour to lend one. */
 textarea.code,
 .hl-wrap.code {
-  background: var(--vscode-input-background);
-  border-color: var(--rc-border);
+  background: var(--vscode-input-background, var(--rc-wash-2));
   min-height: 120px;
   resize: vertical;
   white-space: pre;
@@ -331,7 +624,7 @@ textarea.code.short,
 select.method {
   font-weight: 700;
   padding: 4px 6px;
-  border: 1px solid var(--rc-border);
+  border: 1px solid var(--rc-field-border);
   background: var(--vscode-dropdown-background);
 }
 
@@ -467,6 +760,14 @@ button.icon:hover:not(:disabled) {
   text-underline-offset: 2px;
 }
 
+/* `:name` in the URL path. Blue, so it never reads as a {{variable}}. */
+.tok-path-ok { color: var(--vscode-charts-blue); }
+.tok-path-missing {
+  color: var(--vscode-charts-blue);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 /* --- inline variable editor ---------------------------------------------- */
 
 .var-pop {
@@ -509,9 +810,9 @@ button.icon:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
   padding: 3px 6px;
-  border: 1px solid var(--vscode-input-border, var(--rc-border));
+  border: 1px solid var(--rc-field-border);
   border-radius: 2px;
-  background: var(--vscode-input-background);
+  background: var(--vscode-input-background, var(--rc-wash-2));
   color: var(--vscode-input-foreground);
   font-family: var(--vscode-editor-font-family);
   font-size: 0.95em;
@@ -544,7 +845,7 @@ button.icon:hover:not(:disabled) {
 
 .segmented {
   display: inline-flex;
-  border: 1px solid var(--rc-border);
+  border: 1px solid var(--rc-field-border);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -565,6 +866,92 @@ button.icon:hover:not(:disabled) {
   opacity: 1;
   background: var(--vscode-button-secondaryBackground, var(--vscode-toolbar-hoverBackground));
   color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+
+/* --- response search ----------------------------------------------------- */
+
+.searchbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--rc-border);
+  flex: 0 0 auto;
+}
+
+.searchbar > .codicon-search {
+  color: var(--vscode-descriptionForeground);
+  flex: 0 0 auto;
+}
+
+.searchbox {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--rc-field-border);
+  border-radius: 2px;
+  background: var(--vscode-input-background, var(--rc-wash-2));
+  color: var(--vscode-input-foreground);
+  font-family: inherit;
+  font-size: 0.95em;
+}
+
+.searchbox:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+/* Aa and .* — small, square, and obviously on or off. */
+.toggle {
+  background: none;
+  color: var(--vscode-foreground);
+  padding: 2px 6px;
+  min-width: 24px;
+  opacity: 0.7;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+}
+
+.toggle:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
+
+.toggle.active {
+  opacity: 1;
+  background: var(--vscode-inputOption-activeBackground, var(--vscode-toolbar-hoverBackground));
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  outline: 1px solid var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder));
+  outline-offset: -1px;
+}
+
+.searchnote {
+  font-size: 0.9em;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* A regex engine's complaint can be long; it truncates rather than shoves the
+   step buttons off the end, and the whole of it is in the tooltip. */
+.searchnote.bad {
+  color: var(--vscode-inputValidation-errorForeground, var(--vscode-charts-red));
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * A search hit. It sits on top of syntax colouring, so it keeps the text's own
+ * colour and marks the ground underneath instead of repainting the letters —
+ * that way a matched string still reads as a string. The current hit, the one
+ * the step buttons parked on, gets the stronger of the two.
+ */
+.tok-match {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  border-radius: 2px;
+}
+
+.tok-match.current {
+  background: var(--vscode-editor-findMatchBackground, rgba(234, 92, 0, 0.55));
+  outline: 1px solid var(--vscode-editor-findMatchBorder, var(--vscode-focusBorder));
+  outline-offset: -1px;
 }
 
 /* --- response tree ------------------------------------------------------- */
@@ -607,3 +994,69 @@ button.icon:hover:not(:disabled) {
 }
 
 .jt-summary { color: var(--vscode-descriptionForeground); }
+
+/* --- request settings --------------------------------------------------- */
+
+.settings .lead {
+  margin: 0 0 10px;
+  max-width: 70ch;
+  font-size: 0.92em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* One setting is a row on the pane, not a paragraph of it: a wash and an edge,
+   so the list reads as a list of separate things you can change. */
+.setting {
+  padding: 8px 10px;
+  border: 1px solid var(--rc-border);
+  border-radius: 3px;
+  margin-bottom: 6px;
+  background: var(--rc-wash-1);
+}
+
+/* A setting this request writes into the file reads differently from one it
+   merely inherits, so the row that owns its value is marked as such. */
+.setting.own { border-left: 2px solid var(--vscode-focusBorder); }
+
+.setting-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-head .spacer { flex: 1 1 auto; }
+.setting-label { font-weight: 600; }
+
+.badge {
+  font-size: 0.8em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.badge.inherited { background: none; color: var(--vscode-descriptionForeground); }
+.badge.muted { background: none; color: var(--vscode-descriptionForeground); opacity: 0.8; }
+
+.setting .help {
+  font-size: 0.88em;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 4px;
+  max-width: 78ch;
+}
+
+.setting .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 2px 12px;
+  margin-top: 6px;
+}
+
+.setting select,
+.setting input.cell.narrow,
+.setting textarea.code {
+  margin-top: 6px;
+}
+
+input.cell.narrow { width: 8ch; }

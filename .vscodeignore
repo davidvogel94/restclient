@@ -16,3 +16,4 @@ esbuild.mjs
 .gitignore
 .eslintrc*
 *.vsix
+.claude/**

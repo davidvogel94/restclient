@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { buildRequestEdits } from '../../src/collections/edits';
 import { applyJsonEdits } from '../../src/collections/jsonEdit';
 import { materialize } from '../../src/collections/model';
+import { buildRequestView } from '../../src/collections/view';
 
 const REPO = path.resolve(__dirname, '../../..');
 const FIXTURE = path.join(REPO, 'fixtures/collections/smoke.postman_collection.json');
@@ -135,6 +136,28 @@ test('body modes each write their Postman shape', () => {
 
   const none = apply('Login', { field: 'body', mode: 'none' });
   assert.equal(none.parsed.item[none.index].request.body, undefined);
+});
+
+test('a disabled form-data row survives the round trip back into the editor', () => {
+  // What the enable/disable and File checkboxes in the editor rely on: whatever
+  // is written has to read back as the same rows, or the box springs back.
+  const rows = [
+    { key: 'name', value: 'alice', disabled: true },
+    { key: 'avatar', value: 'me.png', disabled: false, description: 'file' }
+  ];
+  const { after, index } = apply('Login', { field: 'body', mode: 'formdata', rows });
+
+  assert.deepEqual(JSON.parse(after).item[index].request.body.formdata, [
+    { key: 'name', value: 'alice', type: 'text', disabled: true },
+    { key: 'avatar', src: 'me.png', type: 'file' }
+  ]);
+
+  const { tree, json } = materialize(JSON.parse(after));
+  const view = buildRequestView(json, 'smoke', tree.find((n) => n.name === 'Login')!)!;
+  // Serialized, because that is how the editor decides whether the rows it is
+  // showing still match the file — an absent key and an undefined one are the
+  // same thing to it.
+  assert.equal(JSON.stringify(view.body.entries), JSON.stringify(rows));
 });
 
 test('script update replaces one listener and keeps the other', () => {

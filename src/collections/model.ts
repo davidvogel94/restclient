@@ -15,6 +15,8 @@ export interface ItemNode {
   jsonPath: Array<string | number>;
   isFolder: boolean;
   method?: string;
+  /** The URL as written, unresolved: what the tree filter searches on. */
+  url?: string;
   children: ItemNode[];
 }
 
@@ -29,6 +31,13 @@ function stableId(collectionId: string, path: string[]): string {
   // Derived from the path rather than random, so ids survive a reload and
   // webview panels stay attached to the request they were opened for.
   return createHash('sha1').update(collectionId + ' ' + path.join(' ')).digest('hex').slice(0, 32);
+}
+
+/** Postman writes a URL either as a plain string or as a parsed object. */
+function rawUrl(url: any): string | undefined {
+  if (typeof url === 'string') { return url || undefined; }
+  if (url && typeof url === 'object' && typeof url.raw === 'string') { return url.raw || undefined; }
+  return undefined;
 }
 
 /**
@@ -67,6 +76,7 @@ export function materialize(json: PostmanJson): MaterializedCollection {
         jsonPath,
         isFolder,
         method: isFolder ? undefined : String(raw?.request?.method ?? 'GET').toUpperCase(),
+        url: isFolder ? undefined : rawUrl(raw?.request?.url),
         children: isFolder ? walk(raw.item, path, [...jsonPath, 'item']) : []
       };
       index.set(id, node);

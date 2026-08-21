@@ -6,6 +6,7 @@ import {
   highlight,
   languageTokens,
   mergeTokens,
+  pathVariableTokens,
   renderTokens,
   variableTokens,
   type Token
@@ -66,6 +67,38 @@ test('languageTokens declines rather than misaligns', () => {
   assert.deepEqual(languageTokens('anything', 'plaintext'), []);
   assert.deepEqual(languageTokens('anything', undefined), []);
   assert.deepEqual(languageTokens('x'.repeat(200_000), 'json'), []);
+});
+
+test('pathVariableTokens finds `:name` path segments', () => {
+  const text = 'https://api.test/users/:userId/posts/:postId';
+  const tokens = pathVariableTokens(text);
+  assert.deepEqual(slice(text, tokens), [':userId', ':postId']);
+});
+
+test('pathVariableTokens matches Postman on what is not a path variable', () => {
+  // The scheme's colon, and a port, are not path segments.
+  assert.deepEqual(pathVariableTokens('https://localhost:3000/things'), []);
+  // A name stops at the first `.`, so the extension stays plain — url.js:41.
+  assert.deepEqual(slice('/orders/:id.json', pathVariableTokens('/orders/:id.json')), [':id']);
+  // Past `?` a colon is an ordinary character.
+  assert.deepEqual(pathVariableTokens('/search?at=12:30'), []);
+  // A bare `:` binds nothing.
+  assert.deepEqual(pathVariableTokens('/a/:/b'), []);
+});
+
+test('pathVariableTokens classifies per name', () => {
+  const text = '{{baseUrl}}/users/:set/:unset';
+  const tokens = pathVariableTokens(text, (n) => (n === 'set' ? 'path-ok' : 'path-missing'));
+  assert.deepEqual(tokens.map((t) => t.cls), ['path-ok', 'path-missing']);
+  // Unnamed, so the {{variable}} hover popover ignores them.
+  assert.deepEqual(tokens.map((t) => t.name), [undefined, undefined]);
+});
+
+test('a URL colours path and environment variables side by side', () => {
+  const text = 'https://{{baseUrl}}/users/:id';
+  const merged = mergeTokens(pathVariableTokens(text), variableTokens(text));
+  assert.deepEqual(slice(text, merged), ['{{baseUrl}}', ':id']);
+  assert.deepEqual(merged.map((t) => t.cls), ['var-ok', 'path-ok']);
 });
 
 test('mergeTokens splits a language token around a variable', () => {

@@ -1,0 +1,6 @@
+{
+  "recommendations": [
+    "svelte.svelte-vscode",
+    "ms-vscode.extension-test-runner"
+  ]
+}
