@@ -5,6 +5,7 @@
     FromWebview,
     KeyValue,
     RequestView,
+    ResponseViewState,
     ToWebview
   } from '../../src/panels/protocol';
   import type { RequestUpdate } from '../../src/collections/edits';
@@ -27,6 +28,13 @@
     type Matcher
   } from '../../src/shared/search';
   import { formatBody } from '../../src/shared/format';
+  import {
+    effectiveMediaType,
+    isOpaqueMedia,
+    mediaType,
+    previewKind,
+    type PreviewKind
+  } from '../../src/shared/media';
   import KeyValueTable from './KeyValueTable.svelte';
   import SettingsTab from './SettingsTab.svelte';
   import HighlightedField from '../shared/HighlightedField.svelte';
@@ -43,6 +51,11 @@
   const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
   const BODY_MODES = ['none', 'raw', 'graphql', 'urlencoded', 'formdata', 'file'];
   const RAW_LANGUAGES = ['json', 'text', 'javascript', 'html', 'xml'];
+  /** Body renderings, in the order they sit in the segmented control. */
+  const BODY_VIEWS = ['pretty', 'raw', 'preview', 'tree'] as const;
+  type BodyView = (typeof BODY_VIEWS)[number];
+  /** Response tabs that are always there, so always safe to reopen on. */
+  const RES_TABS = ['body', 'headers', 'cookies', 'tests', 'console', 'sent'];
 
   let request = $state<RequestView | undefined>(undefined);
   let environments = $state<EnvironmentSummary[]>([]);
@@ -63,9 +76,18 @@
 
   let reqTab = $state('params');
   let resTab = $state('body');
-  /** How the response body is rendered: formatted, verbatim, or as a tree. */
-  let resView = $state<'pretty' | 'raw' | 'tree'>('pretty');
+  /** How the response body is rendered — the preference, not always the view. */
+  let resView = $state<BodyView>('pretty');
   let wrap = $state(true);
+
+  /**
+   * Whether the preview on screen is one nobody asked for.
+   *
+   * A picture or a sound has no reading as text, so it opens in the preview
+   * whatever the remembered preference says. Clicking any segment is the user
+   * saying otherwise, and it holds until the next response arrives.
+   */
+  let previewedAutomatically = $state(true);
 
   /**
    * Searching the response.
@@ -167,21 +189,123 @@
     return new Promise((resolve) => pickWaiters.set(token, resolve));
   }
 
-  const bodyText = $derived.by(() => {
-    if (!response) { return ''; }
+  /**
+   * The body as it came back, before anything decides what it is.
+   *
+   * `undefined` means the base64 would not decode, which is a broken result
+   * rather than an empty one and has to read differently on screen.
+   */
+  const bodyBytes = $derived.by<Uint8Array | undefined>(() => {
+    if (!response) { return new Uint8Array(); }
     try {
       const bin = atob(response.bodyBase64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
-      return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      return bytes;
     } catch {
-      return '(unable to decode response body)';
+      return undefined;
     }
   });
+
+  const bodyText = $derived(
+    bodyBytes === undefined
+      ? '(unable to decode response body)'
+      : new TextDecoder('utf-8', { fatal: false }).decode(bodyBytes)
+  );
 
   const contentType = $derived(
     response?.headers.find((h) => h.key.toLowerCase() === 'content-type')?.value ?? ''
   );
+
+  /** The type the preview is built with — sniffed only where the server said nothing. */
+  const previewType = $derived(effectiveMediaType(contentType, bodyBytes));
+  /** What this body can be shown as, beyond its text. */
+  const preview = $derived<PreviewKind>(previewKind(contentType, bodyBytes));
+
+  /**
+   * The content-type as sent, saying so when the bytes disagree with the silence.
+   * A server that sent `application/octet-stream` for a PNG has not lied, but it
+   * has not helped either, and the preview should explain where it came from.
+   */
+  const contentTypeLabel = $derived.by(() => {
+    if (!contentType) { return previewType ? `no content-type — looks like ${previewType}` : 'no content-type'; }
+    return previewType && previewType !== mediaType(contentType)
+      ? `${contentType} — looks like ${previewType}`
+      : contentType;
+  });
+
+  /** The segments on offer: preview only where there is something to preview. */
+  const bodyViews = $derived(BODY_VIEWS.filter((v) => v !== 'preview' || preview !== 'none'));
+
+  /**
+   * The view actually on screen.
+   *
+   * `resView` is the remembered preference; this reconciles it with what the
+   * response in front of it can do. Media with no reading as text opens in the
+   * preview regardless, and a preference for `preview` falls back to `pretty`
+   * on the next JSON response rather than showing an empty pane.
+   */
+  const bodyView = $derived.by<BodyView>(() => {
+    if (preview === 'none') { return resView === 'preview' ? 'pretty' : resView; }
+    if (previewedAutomatically && isOpaqueMedia(preview)) { return 'preview'; }
+    return resView;
+  });
+
+  function chooseView(view: BodyView) {
+    previewedAutomatically = false;
+    resView = view;
+  }
+
+  /**
+   * The body as something an `<img>`, a player or the preview frame can load.
+   *
+   * A blob rather than a `data:` URL: a data URL of a ten-megabyte video is a
+   * thirteen-megabyte string rebuilt on every render, where a blob is handed to
+   * the element by reference. Minted only while the preview is actually on
+   * screen and revoked the moment it is not, so a response never sits in memory
+   * twice for a pane nobody is looking at.
+   */
+  let blobUrl = $state<string | undefined>(undefined);
+
+  $effect(() => {
+    const bytes = bodyBytes;
+    const type = previewType;
+    if (!bytes?.length || resTab !== 'body' || bodyView !== 'preview') {
+      blobUrl = undefined;
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type }));
+    blobUrl = url;
+    return () => URL.revokeObjectURL(url);
+  });
+
+  /** Set when the engine could not decode the bytes it was handed. */
+  let previewFailed = $state(false);
+  /** An image's own idea of its size, which the headers never carry. */
+  let imageSize = $state<{ width: number; height: number } | undefined>(undefined);
+
+  // A new blob is a new thing to fail at, or to measure.
+  $effect(() => {
+    void blobUrl;
+    previewFailed = false;
+    imageSize = undefined;
+  });
+
+  function onImageLoad(event: Event & { currentTarget: HTMLImageElement }) {
+    const { naturalWidth, naturalHeight } = event.currentTarget;
+    // An SVG with no intrinsic size reports 0; better to say nothing than 0 × 0.
+    imageSize = naturalWidth && naturalHeight ? { width: naturalWidth, height: naturalHeight } : undefined;
+  }
+
+  /** What the preview is, under the preview. */
+  const previewNote = $derived.by(() => {
+    const parts: string[] = [];
+    if (imageSize) { parts.push(`${imageSize.width} × ${imageSize.height}`); }
+    parts.push(formatSize(bodyBytes?.length ?? 0));
+    if (preview === 'html') { parts.push('scripts and remote resources are blocked'); }
+    if (response?.bodyTruncated) { parts.push('body truncated, so this is a fragment'); }
+    return parts.join(' · ');
+  });
 
   /** The body parsed for the tree view, and the fallback reason when it will not. */
   const parsedBody = $derived.by<{ value: unknown } | { error: string }>(() => {
@@ -209,7 +333,7 @@
   const prettyBody = $derived(formatBody(bodyText, responseLanguage));
 
   /** The body as the view on screen shows it: what the search runs against. */
-  const shownBody = $derived(resView === 'raw' ? bodyText : prettyBody);
+  const shownBody = $derived(bodyView === 'raw' ? bodyText : prettyBody);
   const bodyMatches = $derived(matcher ? matcher.ranges(shownBody).length : 0);
 
   const shownHeaders = $derived.by(() => {
@@ -242,10 +366,12 @@
     const of = (shown: number, total: number, noun: string) =>
       `${shown} of ${total} ${noun}${total === 1 ? '' : 's'}`;
     switch (resTab) {
-      case 'body':
-        return bodyMatches === 0
-          ? 'no matches'
-          : `${bodyMatches}${bodyMatches >= MATCH_LIMIT ? '+' : ''} match${bodyMatches === 1 ? '' : 'es'}`;
+      case 'body': {
+        if (bodyMatches === 0) { return 'no matches'; }
+        const count = `${bodyMatches}${bodyMatches >= MATCH_LIMIT ? '+' : ''} match${bodyMatches === 1 ? '' : 'es'}`;
+        // The preview has no text to mark up, so say which text was counted.
+        return bodyView === 'preview' ? `${count} in the source` : count;
+      }
       case 'headers': return of(shownHeaders.length, response.headers.length, 'header');
       case 'cookies': return of(shownCookies.length, response.cookies.length, 'cookie');
       case 'tests': return of(shownAssertions.length, assertions.length, 'test');
@@ -257,7 +383,9 @@
   });
 
   /** Stepping only makes sense where matches are marked rather than filtered. */
-  const canStep = $derived(resTab === 'body' && resView !== 'tree' && bodyMatches > 0);
+  const canStep = $derived(
+    resTab === 'body' && (bodyView === 'pretty' || bodyView === 'raw') && bodyMatches > 0
+  );
 
   function step(delta: number) {
     if (!bodyMatches) { return; }
@@ -275,7 +403,7 @@
   $effect(() => {
     void matcher;
     void resTab;
-    void resView;
+    void bodyView;
     void bodyMatches;
     currentMatch = 0;
   });
@@ -290,7 +418,7 @@
   }
 
   const bodyHtml = $derived(
-    resView === 'raw' ? mark(shownBody) : marked(shownBody, responseLanguage)
+    bodyView === 'raw' ? mark(shownBody) : marked(shownBody, responseLanguage)
   );
 
   /**
@@ -308,6 +436,37 @@
     if (!target) { return; }
     target.classList.add('current');
     target.scrollIntoView({ block: 'center', inline: 'nearest' });
+  });
+
+  /**
+   * Remembering where the user was reading.
+   *
+   * The host keeps one response view for the workspace, so a preference for the
+   * raw body, or for checking Tests first, survives the next send and the next
+   * editor. Applied on the first `init` only: later ones arrive because the
+   * collection file changed, and re-applying then would drag the user off
+   * whichever tab they had opened since.
+   */
+  let viewRestored = false;
+  let lastRemembered = '';
+
+  function restoreView(state: ResponseViewState) {
+    if (viewRestored) { return; }
+    viewRestored = true;
+    lastRemembered = JSON.stringify(state);
+    if (RES_TABS.includes(state.tab)) { resTab = state.tab; }
+    if ((BODY_VIEWS as readonly string[]).includes(state.view)) { resView = state.view as BodyView; }
+    wrap = state.wrap;
+  }
+
+  $effect(() => {
+    // Visualize is never reopened on: it exists only while a run has produced
+    // one, so a stored `viz` would be a tab that is not there.
+    const state = { tab: resTab === 'viz' ? 'body' : resTab, view: resView, wrap };
+    const encoded = JSON.stringify(state);
+    if (!viewRestored || encoded === lastRemembered) { return; }
+    lastRemembered = encoded;
+    post({ type: 'responseView', state });
   });
 
   /** How many settings this request itself carries — the Settings tab's badge. */
@@ -349,6 +508,40 @@
     return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
   }
 
+  /**
+   * The response card's overflow menu.
+   *
+   * Saving a response is an occasional, deliberate act — it is the one thing
+   * that takes a response out of memory and onto disk — so it lives behind the
+   * ⋯ rather than as another button competing with the status strip.
+   */
+  let menuOpen = $state(false);
+  let menuRoot = $state<HTMLElement | undefined>(undefined);
+
+  function saveResponse(kind: 'body' | 'full') {
+    menuOpen = false;
+    post({ type: 'saveResponse', kind });
+  }
+
+  // Open until the next click outside it or Escape. Bound on window while it is
+  // open rather than for the life of the editor, which is otherwise listening
+  // for keys on every keystroke in a body of any size.
+  $effect(() => {
+    if (!menuOpen) { return; }
+    const onDown = (event: MouseEvent) => {
+      if (!menuRoot?.contains(event.target as Node)) { menuOpen = false; }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { menuOpen = false; }
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  });
+
   /** Send, or — while the run this button started is still going — stop it. */
   function send() {
     if (running) { return post({ type: 'cancel' }); }
@@ -385,6 +578,7 @@
         authTypes = msg.authTypes;
         authFields = msg.authFields;
         settingDefaults = msg.settingDefaults;
+        restoreView(msg.responseView);
         break;
       case 'environments':
         environments = msg.environments;
@@ -397,6 +591,8 @@
         break;
       case 'runStarted':
         running = true;
+        // Whatever the menu was about to save is on its way out.
+        menuOpen = false;
         failure = undefined;
         response = undefined;
         sentRequest = undefined;
@@ -410,7 +606,10 @@
       case 'response':
         sentRequest = msg.request;
         response = msg.response;
-        resTab = 'body';
+        // The tab stays where the user left it — a fresh response is no reason
+        // to drag someone off Tests. Only the body view is reconsidered, and
+        // only so that media opens in the preview rather than as mojibake.
+        previewedAutomatically = true;
         break;
       case 'assertions':
         assertions = [...assertions, ...msg.assertions];
@@ -765,6 +964,31 @@
             {/if}
             {#if response.bodyTruncated}<span class="muted">body truncated</span>{/if}
             <label class="inline muted"><input type="checkbox" bind:checked={wrap} /> wrap</label>
+
+            <div class="menu" bind:this={menuRoot}>
+              <button
+                class="icon"
+                title="More response actions"
+                aria-label="More response actions"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onclick={() => (menuOpen = !menuOpen)}
+              >
+                <span class="codicon codicon-ellipsis"></span>
+              </button>
+              {#if menuOpen}
+                <div class="menu-list" role="menu">
+                  <button role="menuitem" onclick={() => saveResponse('body')}>
+                    Save body…
+                    <span class="muted">just what came back</span>
+                  </button>
+                  <button role="menuitem" onclick={() => saveResponse('full')}>
+                    Save with headers…
+                    <span class="muted">status line, headers, then the body</span>
+                  </button>
+                </div>
+              {/if}
+            </div>
           </div>
 
           <div class="tabs">
@@ -792,7 +1016,9 @@
               </span>
             </button>
             <button class="tab" class:active={resTab === 'sent'} onclick={() => (resTab = 'sent')}>Sent</button>
-            {#if visualizerHtml}
+            <!-- Kept on the bar while it is the open tab even before this run
+                 has produced a visualization, so a re-send does not move you. -->
+            {#if visualizerHtml || resTab === 'viz'}
               <button class="tab" class:active={resTab === 'viz'} onclick={() => (resTab = 'viz')}>Visualize</button>
             {/if}
           </div>
@@ -850,18 +1076,69 @@
             {#if resTab === 'body'}
               <div class="section-title">
                 <div class="segmented" role="group" aria-label="Response view">
-                  {#each ['pretty', 'raw', 'tree'] as view}
+                  {#each bodyViews as view}
                     <button
                       class="seg"
-                      class:active={resView === view}
-                      onclick={() => (resView = view as typeof resView)}
+                      class:active={bodyView === view}
+                      onclick={() => chooseView(view)}
                     >{view}</button>
                   {/each}
                 </div>
-                <span class="muted">{contentType || 'no content-type'}</span>
+                <span class="muted">{contentTypeLabel}</span>
               </div>
 
-              {#if resView === 'tree'}
+              {#if bodyView === 'preview'}
+                {#if bodyBytes === undefined}
+                  <div class="empty">This body did not decode, so there is nothing to show.</div>
+                {:else if !blobUrl}
+                  <div class="empty">The response body is empty.</div>
+                {:else if previewFailed}
+                  <div class="empty">
+                    This editor could not decode {previewType || 'this body'}. Save the response
+                    and open it in something that can.
+                  </div>
+                {:else}
+                  <div class="preview" class:page={preview === 'html'}>
+                    {#if preview === 'image'}
+                      <img
+                        class="preview-image"
+                        src={blobUrl}
+                        alt="The response body"
+                        onload={onImageLoad}
+                        onerror={() => (previewFailed = true)}
+                      />
+                    {:else if preview === 'audio'}
+                      <audio
+                        class="preview-player"
+                        controls
+                        src={blobUrl}
+                        onerror={() => (previewFailed = true)}
+                      ></audio>
+                    {:else if preview === 'video'}
+                      <!-- svelte-ignore a11y_media_has_caption -->
+                      <video
+                        class="preview-player"
+                        controls
+                        src={blobUrl}
+                        onerror={() => (previewFailed = true)}
+                      ></video>
+                    {:else}
+                      <!-- sandbox="": opaque origin, no scripts, no forms, no
+                           navigation. It inherits this panel's CSP on top, so
+                           the page cannot reach the network either. -->
+                      <iframe
+                        class="preview-frame"
+                        title="The response body, rendered"
+                        sandbox=""
+                        src={blobUrl}
+                      ></iframe>
+                    {/if}
+                  </div>
+                {/if}
+                {#if blobUrl && !previewFailed}
+                  <div class="preview-note muted">{previewNote}</div>
+                {/if}
+              {:else if bodyView === 'tree'}
                 {#if !('value' in parsedBody)}
                   <div class="empty">{parsedBody.error}</div>
                 {:else if matcher && !jsonMatches(matcher, parsedBody.value)}
@@ -964,14 +1241,18 @@
                   <pre class:wrap>{@html marked(sentRequest.body, bodyLanguage(request.body.language))}</pre>
                 {/if}
               {/if}
-            {:else if resTab === 'viz' && visualizerHtml}
-              <div class="section-title">
-                Rendered in a separate Visualize tab, isolated from this editor.
-              </div>
-              <details>
-                <summary class="muted">Show the generated HTML</summary>
-                <pre class:wrap>{visualizerHtml}</pre>
-              </details>
+            {:else if resTab === 'viz'}
+              {#if visualizerHtml}
+                <div class="section-title">
+                  Rendered in a separate Visualize tab, isolated from this editor.
+                </div>
+                <details>
+                  <summary class="muted">Show the generated HTML</summary>
+                  <pre class:wrap>{visualizerHtml}</pre>
+                </details>
+              {:else}
+                <div class="empty">This run did not call <code>pm.visualizer.set()</code>.</div>
+              {/if}
             {/if}
           </div>
         {:else}

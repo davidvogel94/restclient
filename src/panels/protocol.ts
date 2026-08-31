@@ -1,4 +1,5 @@
 import type { SerializedAssertion, SerializedRequest, SerializedResponse } from '../runner/protocol';
+import type { SaveResponseKind } from './saveResponse';
 import type { RequestUpdate } from '../collections/edits';
 import type { SettingValue } from '../collections/settings';
 
@@ -44,6 +45,23 @@ export interface RequestView {
   settings: SettingsView;
 }
 
+/**
+ * Which part of a response the editor was last left showing.
+ *
+ * Remembered across sends and across reopening an editor, because it describes
+ * how this user likes to read a response rather than anything about one
+ * request — someone who works in the raw body, or who always checks Tests
+ * first, should not have to say so again on every send.
+ */
+export interface ResponseViewState {
+  /** Response tab: `body`, `headers`, `cookies`, `tests`, `console` or `sent`. */
+  tab: string;
+  /** How the body is rendered: `pretty`, `raw`, `preview` or `tree`. */
+  view: string;
+  /** Whether long lines are wrapped. */
+  wrap: boolean;
+}
+
 export interface EnvironmentSummary {
   id: string;
   name: string;
@@ -84,6 +102,8 @@ export type ToWebview =
        * untouched toggle is never blank or misleadingly off.
        */
       settingDefaults: Record<string, SettingValue>;
+      /** The response tab and body view this editor should open on. */
+      responseView: ResponseViewState;
     }
   | { type: 'saved' }
   | { type: 'saveFailed'; message: string }
@@ -112,5 +132,9 @@ export type FromWebview =
   /** Open the host's file dialog for a file body or form-data file field. */
   | { type: 'pickFile'; token: string }
   | { type: 'editEnvironment' }
+  /** Write the response on screen out to a file the host asks the user for. */
+  | { type: 'saveResponse'; kind: SaveResponseKind }
+  /** Remember the response tab and body view now on screen, for next time. */
+  | { type: 'responseView'; state: ResponseViewState }
   | { type: 'manageCookies' }
   | { type: 'revealInFile' };

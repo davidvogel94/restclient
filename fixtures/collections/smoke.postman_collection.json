@@ -56,7 +56,17 @@
 					"raw": "{\n  \"user\": \"{{user}}\",\n  \"cv\": \"{{collectionVar}}\"\n}",
 					"options": { "raw": { "language": "json" } }
 				},
-				"url": { "raw": "{{baseUrl}}/login", "host": [ "{{baseUrl}}" ], "path": [ "login" ] }
+				"url": {
+					"path": [
+						"login"
+					],
+					"host": [
+						"{{baseUrl}}"
+					],
+					"query": [],
+					"variable": [],
+					"raw": "{{baseUrl}}/login"
+				}
 			}
 		},
 		{
