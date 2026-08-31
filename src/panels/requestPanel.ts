@@ -8,12 +8,25 @@ import type { ItemNode } from '../collections/model';
 import { readSettingDefaults } from '../runner/networkSettings';
 import type { RunService } from '../runner/runService';
 import type { RunHandle } from '../runner/client';
-import type { ConsoleLine, EnvironmentSummary, FromWebview, ToWebview } from './protocol';
+import type {
+  ConsoleLine,
+  EnvironmentSummary,
+  FromWebview,
+  ResponseViewState,
+  ToWebview
+} from './protocol';
 import type { CachedResponse } from './responseCache';
 import type { RunResults } from './runResults';
+import { responseFileName, responseHead, type SaveResponseKind } from './saveResponse';
 import { VisualizerPanel } from './visualizerPanel';
 
 export const VIEW_TYPE = 'restclient.request';
+
+/** Where the last-used response tab and body view is kept between sessions. */
+export const RESPONSE_VIEW_KEY = 'restclient.responseView';
+
+/** What a first-ever editor opens on: the body, formatted and wrapped. */
+export const DEFAULT_RESPONSE_VIEW: ResponseViewState = { tab: 'body', view: 'pretty', wrap: true };
 
 /** Which request an editor tab is for, as the Collections pane identifies it. */
 export interface RequestTab {
@@ -205,6 +218,19 @@ export class RequestPanel implements vscode.Disposable {
     void this.panel.webview.postMessage(msg);
   }
 
+  /**
+   * The response view every editor opens on.
+   *
+   * Held per workspace rather than per request: it is a reading preference, and
+   * one that reset itself whenever you opened a different request would be no
+   * preference at all. Merged over the defaults so a state written by an older
+   * version, or one hand-edited, cannot leave a field undefined.
+   */
+  private responseView(): ResponseViewState {
+    const stored = this.context.workspaceState.get<Partial<ResponseViewState>>(RESPONSE_VIEW_KEY);
+    return { ...DEFAULT_RESPONSE_VIEW, ...stored };
+  }
+
   private async environments(): Promise<EnvironmentSummary[]> {
     const activeId = this.activeEnvironmentId();
     return Promise.all(
@@ -250,7 +276,8 @@ export class RequestPanel implements vscode.Disposable {
       scriptsAllowed: this.runService.scriptsAllowed,
       authTypes: AUTH_TYPES,
       authFields: AUTH_FIELDS,
-      settingDefaults: readSettingDefaults()
+      settingDefaults: readSettingDefaults(),
+      responseView: this.responseView()
     });
   }
 
@@ -299,6 +326,13 @@ export class RequestPanel implements vscode.Disposable {
 
       case 'pickFile':
         return this.pickFile(msg.token);
+
+      case 'saveResponse':
+        return this.saveResponse(msg.kind);
+
+      case 'responseView':
+        await this.context.workspaceState.update(RESPONSE_VIEW_KEY, msg.state);
+        return;
 
       case 'editEnvironment':
         await vscode.commands.executeCommand('restclient.editEnvironment');
@@ -396,6 +430,60 @@ export class RequestPanel implements vscode.Disposable {
     this.post({ type: 'filePicked', token, path: relative.split(path.sep).join('/') });
   }
 
+  /**
+   * Write the response on screen out to a file.
+   *
+   * The only path that puts a response on disk: everything else about them is
+   * memory-only, so this happens when asked for by name and nowhere else. The
+   * bytes come from the host's own copy of the result rather than back out of
+   * the webview — the body is already here, and a megabyte of base64 should not
+   * make the round trip to be handed straight back.
+   */
+  private async saveResponse(kind: SaveResponseKind): Promise<void> {
+    const response = (this.current ?? this.results.get(this.cacheKey))?.response;
+    if (!response) {
+      void vscode.window.showWarningMessage('There is no response to save yet.');
+      return;
+    }
+
+    const name = this.node()?.name ?? 'response';
+    const contentType =
+      response.headers.find((h) => h.key.toLowerCase() === 'content-type')?.value ?? '';
+    const root = this.store.rootFor(this.collectionUri) ?? this.store.workspaceRoot;
+    const fileName = responseFileName(name, contentType, kind);
+
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: root ? vscode.Uri.file(path.join(root, fileName)) : undefined,
+      saveLabel: 'Save',
+      title:
+        kind === 'full' ? `Save "${name}" response with headers` : `Save "${name}" response body`
+    });
+    if (!target) { return; }
+
+    const body = Buffer.from(response.bodyBase64, 'base64');
+    const bytes =
+      kind === 'full' ? Buffer.concat([Buffer.from(responseHead(response), 'utf8'), body]) : body;
+
+    try {
+      await vscode.workspace.fs.writeFile(target, bytes);
+    } catch (e: any) {
+      void vscode.window.showErrorMessage(`Could not save the response: ${e?.message ?? e}`);
+      return;
+    }
+
+    // A body over `restclient.maxResponseSizeMb` was cut short on the way in, so the file
+    // is short too — said plainly rather than handing over a partial file that
+    // looks whole.
+    const partial = response.bodyTruncated
+      ? ' The body was truncated when it came back, so the file is incomplete.'
+      : '';
+    const chosen = await vscode.window.showInformationMessage(
+      `Saved to ${vscode.workspace.asRelativePath(target)}.${partial}`,
+      'Open'
+    );
+    if (chosen === 'Open') { await vscode.commands.executeCommand('vscode.open', target); }
+  }
+
   /** Move one plaintext secret out of the environment file, on request. */
   private async moveSecret(key: string): Promise<void> {
     try {
@@ -435,6 +523,16 @@ export class RequestPanel implements vscode.Disposable {
   /** Test seam: what a freshly reopened panel would replay, if anything. */
   restoredForTest(): CachedResponse | undefined {
     return this.current ?? this.results.get(this.cacheKey);
+  }
+
+  /** Test seam: the response view this editor told its webview to open on. */
+  responseViewForTest(): ResponseViewState {
+    return this.responseView();
+  }
+
+  /** Test seam: the webview reporting where the user is reading, as it does on every change. */
+  rememberViewForTest(state: ResponseViewState): Promise<void> {
+    return this.onMessage({ type: 'responseView', state });
   }
 
   /**
@@ -539,12 +637,28 @@ export class RequestPanel implements vscode.Disposable {
     // connect-src 'none': the webview never makes network calls. Every request
     // goes through the runner process, which is the only way proxy, client
     // certificate and cookie handling can be correct.
+    //
+    // The rest of this policy is what a response preview costs, and each part
+    // is bounded:
+    //
+    //  - `blob:` on img/media/frame is how a body already in memory is handed
+    //    to an <img>, a player or the preview frame. Nothing else can mint one:
+    //    a blob URL is same-origin to this document and unguessable.
+    //  - `style-src 'unsafe-inline'` lets a previewed HTML response keep its own
+    //    <style>, which is most of what makes the preview worth looking at. It
+    //    buys an attacker nothing: script-src stays nonce-only, so no inline
+    //    script runs, and with `default-src 'none'` no stylesheet can reach a
+    //    URL — which is also what rules out CSS-based exfiltration.
+    //  - The preview frame is `sandbox=""`: opaque origin, no scripts, no forms,
+    //    no navigation. It inherits this policy on top of that, so a response
+    //    body cannot load a remote image or fetch anything either. A response is
+    //    someone else's HTML, and previewing it must not phone home.
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data:; script-src 'nonce-${n}'; style-src ${webview.cspSource}; font-src ${webview.cspSource}; connect-src 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; media-src blob: data:; frame-src blob:; script-src 'nonce-${n}'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; connect-src 'none'; form-action 'none';">
 <link rel="stylesheet" href="${codicons}">
 <link rel="stylesheet" href="${styles}">
 <title>Request</title>

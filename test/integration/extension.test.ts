@@ -2279,6 +2279,37 @@ suite('REST Client extension', () => {
     }
   });
 
+  test('the response view a user reads in survives the editor being closed', async function () {
+    this.timeout(60000);
+    const entry = api.store.collections[0];
+    const node = entry.materialized.tree.find((n) => n.name === 'Me')!;
+
+    const panel = api.panels.open(entry, node);
+    await panel.whenReady;
+    // What a first-ever editor opens on, before anyone has read anything.
+    assert.deepEqual(panel.responseViewForTest(), { tab: 'body', view: 'pretty', wrap: true });
+
+    await panel.rememberViewForTest({ tab: 'tests', view: 'raw', wrap: false });
+    panel.dispose();
+
+    // A different request, in a brand new webview: this is a reading
+    // preference, so it is not tied to the request it was set on.
+    const other = entry.materialized.tree.find((n) => n.name !== 'Me' && n.method)!;
+    const reopened = api.panels.open(entry, other);
+    await reopened.whenReady;
+    assert.deepEqual(reopened.responseViewForTest(), { tab: 'tests', view: 'raw', wrap: false });
+    reopened.dispose();
+
+    // A state written by an older version cannot leave a field undefined.
+    const partial = api.panels.open(entry, node);
+    await partial.rememberViewForTest({ tab: 'headers' } as never);
+    partial.dispose();
+    const merged = api.panels.open(entry, node);
+    assert.deepEqual(merged.responseViewForTest(), { tab: 'headers', view: 'pretty', wrap: true });
+    await merged.rememberViewForTest({ tab: 'body', view: 'pretty', wrap: true });
+    merged.dispose();
+  });
+
   test('a closed request editor keeps its response in memory when reopened', async function () {
     this.timeout(60000);
     const server = await startServer();

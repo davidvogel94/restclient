@@ -65,7 +65,7 @@ Postman marks sensitive variables `"type": "secret"` but still exports them in p
 
 ### Responses
 
-Responses are held **in memory only**, for as long as the window is open. Closing and reopening a request editor keeps the last response; nothing is written to disk, workspace state or global storage. `REST Client: Clear Cached Responses` drops them immediately.
+Responses are held **in memory only**, for as long as the window is open. Closing and reopening a request editor keeps the last response; nothing is written to disk, workspace state or global storage unless you ask for it — the `$(ellipsis)` menu in the response's top-right corner saves one to a file you pick, and that is the only path that puts a response on disk. `REST Client: Clear Cached Responses` drops them immediately.
 
 There is one record of them, whoever produced it: a single Send, `$(play)` on a tree row, a quick-run from a collection overview and a **Run All** all file the same per-request result — which is why the tree row, the overview list and an already-open request editor agree about what happened without any of them re-running anything.
 
@@ -104,11 +104,22 @@ A collection in the **v1 or v2.0** format is a third case, and reads as a warnin
 
    Environments are the exception. Their secrets live in your keychain and the file holds empty strings, so an export leaves them empty too unless you say otherwise: where there is something in the keychain to include, you are asked once, and Cancel means leave them out. Exporting over a file this workspace is working on is refused rather than confirmed.
 
-Responses show body, headers, cookies, test results, script console output and the exact request as sent. The body has three views:
+Responses show body, headers, cookies, test results, script console output and the exact request as sent. The body has four views:
 
 - **Pretty** — re-indented and broken across lines (JSON and XML), then syntax highlighted.
 - **Raw** — exactly the bytes that came back, unformatted.
+- **Preview** — the body as the thing it is: a picture, a player, or a rendered page. Offered whenever the response is an image, audio, video or HTML, and nothing else.
 - **Tree** — a collapsible tree of the parsed JSON, for finding one field in a large payload.
+
+A picture, a sound or a film opens in **Preview** by itself, because there is no useful reading of those bytes as text — click any other view and it stays where you put it until the next response. HTML does not: a REST client is usually there for the source, so it opens in **Pretty** and the render is one click away. Under the preview is what you are looking at: an image's real dimensions, which no header carries, the size of what came back, and a note when a body was truncated on the way in and the preview is therefore of a fragment.
+
+An HTML preview renders in a frame that is sealed shut: no scripts, no forms, no navigation, and no network — which means remote images, web fonts and stylesheets do not load, so what you see is the page's own markup and its own `<style>`, and previewing someone's error page cannot fetch their tracking pixel. Sound and video are played by the editor itself, so which formats work is whatever the VS Code build can decode; one it cannot says so rather than showing an empty player.
+
+A server that sends `application/octet-stream` — or no `Content-Type` at all — has its first bytes read to see whether it is a PNG, a JPEG, a WAV, an MP4 and so on, and the preview says where the type came from (`no content-type — looks like image/png`). A server that *did* name a type is taken at its word: a PNG labelled `text/plain` keeps showing as text, because that mislabelling is the bug you need to see.
+
+Whichever tab and body view you leave a response on is where the next one opens — on the next Send, on a different request, and after closing and reopening the editor. Someone who lives in **Raw**, or who checks **Tests** first, says so once.
+
+The `$(ellipsis)` menu in the top-right corner of the response saves what came back: **Save body…** writes the body alone, named for the type the server said it was — `.json`, `.png`, `.pdf`, and `.bin` for a type nothing here recognises — and **Save with headers…** writes the whole message, status line and headers first, as a `.http` file. A body that was truncated on the way in (`restclient.maxResponseSizeMb`) saves short, and says so.
 
 One search box, above the response, covers all of it — `Ctrl`/`Cmd+F` puts the cursor in it. What it does depends on what is in front of you: rows narrow to the ones that match (headers, cookies, tests, console lines, the request as sent), the JSON tree prunes to the branches containing a hit and keeps the path to each, and body text marks every hit so `Enter` and `Shift+Enter` step through them. The tab labels turn into `matched/total`, so you can see which tab the thing you are looking for is on without opening it. `Aa` matches case, `.*` treats the query as a regular expression — a pattern that will not compile says so instead of quietly matching nothing.
 
